@@ -77,6 +77,8 @@ function csvCell(value: string): string {
 
 // ---- MessagePack encoder (pure-JS, no dependencies) ----
 
+const _encoder = new TextEncoder();
+
 function mpEncodeValue(value: unknown, out: Uint8Array[]): void {
   if (value === null || value === undefined) {
     out.push(new Uint8Array([0xc0]));
@@ -141,7 +143,7 @@ function mpEncodeNumber(n: number, out: Uint8Array[]): void {
 }
 
 function mpEncodeString(s: string, out: Uint8Array[]): void {
-  const bytes = new TextEncoder().encode(s);
+  const bytes = _encoder.encode(s);
   const len = bytes.length;
   if (len <= 31) { out.push(new Uint8Array([0xa0 | len])); }
   else if (len <= 0xff) { out.push(new Uint8Array([0xd9, len])); }

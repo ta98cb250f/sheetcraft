@@ -10,7 +10,7 @@ type Props = {
   records: MasterRecord[];
   onClose: () => void;
   onNavigate: (rowIdx: number, fieldName: string) => void;
-  onReplace: (matches: Match[], newValue: string, replaceAll: boolean) => void;
+  onReplace: (matches: Match[], newValue: string) => void;
 };
 
 function getCellString(cell: Cell | Cell[] | undefined): string {
@@ -57,8 +57,22 @@ export function SearchPanel({ mode, fields, records, onClose, onNavigate, onRepl
   const handleReplace = useCallback((all: boolean) => {
     if (matches.length === 0) return;
     const targets = all ? matches : (matches[currentIdx] ? [matches[currentIdx]] : []);
-    onReplace(targets, replaceTerm, all);
+    onReplace(targets, replaceTerm);
   }, [matches, currentIdx, replaceTerm, onReplace]);
+
+  const editableFieldNames = useMemo(
+    () => new Set(editableFields.map((f) => f.name)),
+    [editableFields]
+  );
+
+  const currentMatchEditable = matches[currentIdx]
+    ? editableFieldNames.has(matches[currentIdx].fieldName)
+    : false;
+
+  const hasAnyEditableMatch = useMemo(
+    () => matches.some((m) => editableFieldNames.has(m.fieldName)),
+    [matches, editableFieldNames]
+  );
 
   const matchInfo = matches.length > 0
     ? `${currentIdx + 1} / ${matches.length} 件`
@@ -99,14 +113,14 @@ export function SearchPanel({ mode, fields, records, onClose, onNavigate, onRepl
           <button
             style={styles.btn}
             onClick={() => handleReplace(false)}
-            disabled={matches.length === 0 || editableFields.length === 0}
+            disabled={matches.length === 0 || !currentMatchEditable}
           >
             置換
           </button>
           <button
             style={styles.btn}
             onClick={() => handleReplace(true)}
-            disabled={matches.length === 0 || editableFields.length === 0}
+            disabled={matches.length === 0 || !hasAnyEditableMatch}
           >
             すべて置換
           </button>

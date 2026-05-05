@@ -362,13 +362,16 @@ export function detectComputedCycles(fields: import('./types.js').FieldDef[]): s
   );
   if (computedNames.size === 0) return [];
 
+  const namePatterns = new Map<string, RegExp>();
+  for (const cf of computedNames) namePatterns.set(cf, new RegExp(`\\b${cf}\\b`));
+
   const deps = new Map<string, Set<string>>();
   for (const f of fields) {
     if (f.type !== 'computed') continue;
     const formula = f.formula ?? '';
     const fieldDeps = new Set<string>();
     for (const cf of computedNames) {
-      if (new RegExp(`\\b${cf}\\b`).test(formula)) fieldDeps.add(cf);
+      if (namePatterns.get(cf)!.test(formula)) fieldDeps.add(cf);
     }
     deps.set(f.name, fieldDeps);
   }
@@ -409,7 +412,11 @@ export function computeRecord(
         try {
           result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
         } catch (e) {
-          if (formulaErrors && e instanceof FormulaError) formulaErrors.push({ field: field.name, message: e.message });
+          if (e instanceof FormulaError) {
+            if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
+          } else {
+            console.warn(`Unexpected error evaluating override for "${field.name}":`, e);
+          }
         }
         continue;
       }
@@ -418,7 +425,11 @@ export function computeRecord(
       try {
         result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
       } catch (e) {
-        if (formulaErrors && e instanceof FormulaError) formulaErrors.push({ field: field.name, message: e.message });
+        if (e instanceof FormulaError) {
+          if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
+        } else {
+          console.warn(`Unexpected error evaluating formula "${field.formula}":`, e);
+        }
       }
     }
   }

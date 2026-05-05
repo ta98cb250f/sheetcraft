@@ -302,7 +302,7 @@ export function TableView({
 
       const firstIdx = selectedRows[0]._idx;
       const sourceCell = table.records[firstIdx]?.[fieldName] as Cell | undefined;
-      const sourceValue: SimpleCell = isRichCell(sourceCell)
+      const sourceValue: SimpleCell = (sourceCell !== undefined && isRichCell(sourceCell))
         ? (sourceCell as RichCell).value as SimpleCell
         : sourceCell as SimpleCell;
 
@@ -310,7 +310,7 @@ export function TableView({
       const newRecords = table.records.map((r, i) => {
         if (!fillTargets.has(i)) return r;
         const existing = r[fieldName] as Cell | undefined;
-        if (isRichCell(existing)) {
+        if (existing !== undefined && isRichCell(existing)) {
           return { ...r, [fieldName]: { ...(existing as RichCell), value: sourceValue } };
         }
         return { ...r, [fieldName]: sourceValue };
@@ -433,24 +433,34 @@ export function TableView({
     [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich, fields, pinnedColumns]
   );
 
-  // Row drag: sync new order back to records
+  // Row drag: sync new order back to records (preserve filtered-out rows at end)
   const onRowDragEnd = useCallback((_e: RowDragEndEvent) => {
     if (!gridRef.current?.api) return;
-    const newRecords: MasterRecord[] = [];
+    const visibleIdxs: number[] = [];
     gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
-      if (node.data) {
-        const row = node.data as { _idx: number };
-        newRecords.push(table.records[row._idx]);
-      }
+      if (node.data) visibleIdxs.push((node.data as { _idx: number })._idx);
     });
+    const visibleSet = new Set(visibleIdxs);
+    const hiddenRecords = table.records.filter((_, i) => !visibleSet.has(i));
+    const newRecords = [
+      ...visibleIdxs.map((idx) => table.records[idx]),
+      ...hiddenRecords,
+    ];
     onSave({ ...table, records: newRecords });
   }, [table, onSave]);
 
-  // Search panel: navigate to match cell
+  // Search panel: navigate to match cell (use display index, not record index)
   const handleSearchNavigate = useCallback((rowIdx: number, fieldName: string) => {
     if (!gridRef.current?.api) return;
-    gridRef.current.api.ensureIndexVisible(rowIdx);
-    gridRef.current.api.setFocusedCell(rowIdx, fieldName);
+    let displayIndex: number | null = null;
+    gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
+      if ((node.data as { _idx: number })?._idx === rowIdx) {
+        displayIndex = node.rowIndex ?? null;
+      }
+    });
+    if (displayIndex === null) return;
+    gridRef.current.api.ensureIndexVisible(displayIndex);
+    gridRef.current.api.setFocusedCell(displayIndex, fieldName);
   }, []);
 
   // Search panel: replace matches
@@ -461,7 +471,7 @@ export function TableView({
       for (const { rowIdx, fieldName } of matches) {
         const field = fields.find((f) => f.name === fieldName);
         if (!field || field.type === 'computed' || field.editable === false || field.auto) continue;
-        const existing = newRecords[rowIdx][fieldName] as Cell | undefined;
+        const existing = newRecords[rowIdx][fieldName] as Cell;
         const parsed = parseValue(newValue, field);
         if (isRichCell(existing)) {
           newRecords[rowIdx] = { ...newRecords[rowIdx], [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
