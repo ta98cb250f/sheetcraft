@@ -620,17 +620,36 @@ jobs:
 
 ### Phase 1: ローカル編集ツール
 
-- [ ] core: スキーマパーサー
-- [ ] core: バリデーションエンジン（validation / anomaly）
-- [ ] core: 数式エンジン
-- [ ] gui: AG Gridによるテーブル表示・編集
-- [ ] gui: 型に応じた入力コンポーネント（enum, ref, computed）
-- [ ] gui: セルの色・コメント表示
-- [ ] gui: 一括入力・連番・パターンフィル
-- [ ] gui: File System Access APIでJSON読み書き
-- [ ] cli: validate コマンド
-- [ ] cli: export コマンド（JSON）
-- [ ] cli: new コマンド
+#### 実装済み ✅
+
+- [x] core: スキーマパーサー
+- [x] core: バリデーションエンジン（validation / anomaly）
+- [x] core: 数式エンジン
+- [x] core: エクスポーター（JSON / CSV）
+- [x] gui: AG Gridによるテーブル表示
+- [x] gui: セルの色・コメント表示（セル詳細パネル）
+- [x] gui: File System Access APIでJSON読み書き
+- [x] cli: validate コマンド
+- [x] cli: export コマンド（JSON / CSV）
+- [x] cli: new コマンド
+
+#### 未実装・課題あり（→ ISSUES.md 参照）
+
+- [ ] gui: セル内直接編集（P0）
+- [ ] gui: コピー＆ペースト（P0）
+- [ ] gui: 行の追加・削除（P0）
+- [ ] gui: キーボードナビゲーション（P1）
+- [ ] gui: 型に応じた入力コンポーネント（enum→ドロップダウン、bool→チェックボックス等）（P1）
+- [ ] gui: リアルタイムバリデーション（P1）
+- [ ] gui: コメントマーカー表示（P1）
+- [ ] gui: Undo / Redo（P1）
+- [ ] gui: ソート・フィルタ有効化（P2）
+- [ ] gui: 一括フィル操作 / 検索・置換（P2）
+- [ ] gui: エクスポートボタン（P2）
+- [ ] core: list型バリデーション修正（P3）
+- [ ] core: 循環参照検出（P3）
+- [ ] core: auto:increment 実装（P3）
+- [ ] cli: export（protobuf / MessagePack）（P3）
 
 ### Phase 2: GitHub連携
 
