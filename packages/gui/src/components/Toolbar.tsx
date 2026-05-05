@@ -14,11 +14,14 @@ type Props = {
   onAddRow: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onExportJSON: () => void;
+  onExportCSV: () => void;
 };
 
 export function Toolbar({
   hasFolder, hasTable, isDirty, canUndo, canRedo, validation,
   savedFolderName, onOpenFolder, onReopenLastFolder, onSave, onAddRow, onUndo, onRedo,
+  onExportJSON, onExportCSV,
 }: Props) {
   const errorCount = validation?.errors.length ?? 0;
   const warnCount = validation?.warnings.length ?? 0;
@@ -54,6 +57,13 @@ export function Toolbar({
               disabled={!isDirty}
             >
               保存{isDirty ? ' *' : ''}
+            </button>
+            <div style={styles.separator} />
+            <button style={styles.btnSmall} onClick={onExportJSON} title="JSON としてエクスポート">
+              JSON
+            </button>
+            <button style={styles.btnSmall} onClick={onExportCSV} title="CSV としてエクスポート">
+              CSV
             </button>
           </>
         )}
@@ -108,6 +118,15 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   btnPrimary: { background: '#1a73e8', color: '#fff', border: '1px solid #1557b0' },
+  btnSmall: {
+    padding: '4px 8px',
+    fontSize: 12,
+    border: '1px solid #ccc',
+    borderRadius: 4,
+    background: '#f5f5f5',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+  },
   validationBadge: { display: 'flex', gap: 4, marginLeft: 4 },
   errorBadge: {
     fontSize: 12, padding: '2px 8px', borderRadius: 10,

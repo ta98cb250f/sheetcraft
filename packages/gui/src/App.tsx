@@ -3,7 +3,7 @@ import { useProject } from './hooks/useProject.js';
 import { Toolbar } from './components/Toolbar.js';
 import { TableList } from './components/TableList.js';
 import { TableView } from './components/TableView.js';
-import { validateTable as validateTableFn, isRichCell } from '@sheetcraft/core';
+import { validateTable as validateTableFn, isRichCell, exportToJSON, exportToCSV } from '@sheetcraft/core';
 import type { TableFile, ValidationResult, Cell } from '@sheetcraft/core';
 
 const MAX_HISTORY = 50;
@@ -121,6 +121,32 @@ export function App() {
     handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord] });
   }, [currentTable, handleTableChange]);
 
+  const downloadFile = useCallback((content: string, filename: string, mime: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleExportJSON = useCallback(() => {
+    if (!currentTable || !state.selectedTable) return;
+    const refTables = new Map([...state.tables.values()].map((t) => [t.table, t]));
+    const json = exportToJSON(currentTable, { baseFields: state.baseFields ?? undefined, refTables, pretty: true });
+    const name = state.selectedTable.replace(/\.json$/, '') + '_export.json';
+    downloadFile(json, name, 'application/json');
+  }, [currentTable, state.selectedTable, state.tables, state.baseFields, downloadFile]);
+
+  const handleExportCSV = useCallback(() => {
+    if (!currentTable || !state.selectedTable) return;
+    const refTables = new Map([...state.tables.values()].map((t) => [t.table, t]));
+    const csv = exportToCSV(currentTable, { baseFields: state.baseFields ?? undefined, refTables });
+    const name = state.selectedTable.replace(/\.json$/, '') + '_export.csv';
+    downloadFile(csv, name, 'text/csv');
+  }, [currentTable, state.selectedTable, state.tables, state.baseFields, downloadFile]);
+
   // Delete row by record index
   const handleDeleteRow = useCallback((recordIndex: number) => {
     if (!currentTable) return;
@@ -147,6 +173,8 @@ export function App() {
         onAddRow={handleAddRow}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        onExportJSON={handleExportJSON}
+        onExportCSV={handleExportCSV}
       />
       <div style={styles.body}>
         {state.tableNames.length > 0 && (

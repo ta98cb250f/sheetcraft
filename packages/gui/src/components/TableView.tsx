@@ -9,6 +9,7 @@ import type {
   GetContextMenuItemsParams,
   MenuItemDef,
   ICellRendererParams,
+  RowDragEndEvent,
 } from 'ag-grid-community';
 import type {
   TableFile,
@@ -103,7 +104,7 @@ export function TableView({
   }), []);
 
   const colDefs = useMemo<ColDef[]>(() => {
-    return fields.map((f) => {
+    return fields.map((f, i) => {
       const isEditable = f.type !== 'computed' && f.editable !== false && !f.auto;
 
       let cellEditorSelector: ColDef['cellEditorSelector'];
@@ -150,6 +151,7 @@ export function TableView({
         cellEditorSelector,
         cellRenderer: CommentCellRenderer,
         headerClass: f.export === false ? 'col-no-export' : '',
+        rowDrag: i === 0,
         cellStyle: (params: { data: { _idx: number } }) => {
           const rowIdx = params.data._idx;
           const hasError = validation?.errors.some(
@@ -248,12 +250,23 @@ export function TableView({
     e.preventDefault();
   }, [fields, table, onSave]);
 
-  // Ctrl+C copy focused cell / Delete row
+  // Ctrl+C copy: multiple selected rows as TSV, or single focused cell
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!gridRef.current?.api) return;
     const editing = gridRef.current.api.getEditingCells().length > 0;
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editing) {
+      const selectedRows = gridRef.current.api.getSelectedRows() as Array<{ _idx: number } & Record<string, unknown>>;
+      if (selectedRows.length > 1) {
+        // Multi-row copy: all field values as TSV
+        const tsv = selectedRows.map((row) =>
+          fields.map((f) => String(row[f.name] ?? '')).join('\t')
+        ).join('\n');
+        navigator.clipboard.writeText(tsv).catch((err) => console.warn('clipboard write failed:', err));
+        e.preventDefault();
+        return;
+      }
+
       const fc = gridRef.current.api.getFocusedCell();
       if (!fc) return;
       const row = gridRef.current.api.getDisplayedRowAtIndex(fc.rowIndex);
@@ -271,7 +284,7 @@ export function TableView({
         e.preventDefault();
       }
     }
-  }, [selectedRow, onDeleteRow]);
+  }, [selectedRow, onDeleteRow, fields]);
 
   const updateCellRich = useCallback((rowIdx: number, fieldName: string, patch: Partial<RichCell>) => {
     const newRecords = table.records.map((r, i) => {
@@ -289,6 +302,7 @@ export function TableView({
         ? (params.node.data as { _idx: number })._idx
         : null;
       const fieldName = params.column?.getColId() ?? null;
+      const field = fieldName ? fields.find((f) => f.name === fieldName) : null;
 
       const colorItems: MenuItemDef[] = cellColors
         ? Object.entries(cellColors.cell_colors).map(([key, def]) => ({
@@ -320,6 +334,21 @@ export function TableView({
             ]
           : [];
 
+      const overrideItem: (string | MenuItemDef)[] =
+        field?.type === 'computed' && rowIdx !== null && fieldName
+          ? [
+              {
+                name: '式をオーバーライド',
+                action: () => {
+                  const existing = table.records[rowIdx]?.[fieldName];
+                  const current = isRichCell(existing as Cell) ? (existing as RichCell).override ?? '' : '';
+                  const result = window.prompt('オーバーライド式を入力（空白で解除）:', current);
+                  if (result !== null) updateCellRich(rowIdx, fieldName, { override: result || undefined });
+                },
+              },
+            ]
+          : [];
+
       return [
         { name: '行を追加', action: onAddRow },
         ...(rowIdx !== null
@@ -333,12 +362,26 @@ export function TableView({
             }]
           : []),
         ...richCellItems,
+        ...overrideItem,
         'separator',
         'copy',
       ];
     },
-    [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich]
+    [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich, fields]
   );
+
+  // Row drag: sync new order back to records
+  const onRowDragEnd = useCallback((_e: RowDragEndEvent) => {
+    if (!gridRef.current?.api) return;
+    const newRecords: MasterRecord[] = [];
+    gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
+      if (node.data) {
+        const row = node.data as { _idx: number };
+        newRecords.push(table.records[row._idx]);
+      }
+    });
+    onSave({ ...table, records: newRecords });
+  }, [table, onSave]);
 
   return (
     <div
@@ -355,7 +398,9 @@ export function TableView({
           defaultColDef={defaultColDef}
           onCellValueChanged={onCellValueChanged}
           onCellClicked={onCellClicked}
-          rowSelection="single"
+          rowSelection="multiple"
+          rowDragManaged
+          onRowDragEnd={onRowDragEnd}
           animateRows
           stopEditingWhenCellsLoseFocus
           getContextMenuItems={getContextMenuItems}
