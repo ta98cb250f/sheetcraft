@@ -17,7 +17,7 @@ function getNumericCellValue(cell: Cell | Cell[] | undefined): number {
 }
 
 export function App() {
-  const { state, loading, error, openFolder, selectTable, saveTable } = useProject();
+  const { state, loading, error, savedFolderName, openFolder, reopenLastFolder, selectTable, saveTable } = useProject();
   const [dirty, setDirty] = useState(false);
   const [pendingTable, setPendingTable] = useState<TableFile | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
@@ -140,7 +140,9 @@ export function App() {
         canUndo={canUndo}
         canRedo={canRedo}
         validation={validation}
+        savedFolderName={savedFolderName}
         onOpenFolder={openFolder}
+        onReopenLastFolder={reopenLastFolder}
         onSave={handleSave}
         onAddRow={handleAddRow}
         onUndo={handleUndo}
@@ -161,6 +163,16 @@ export function App() {
           {!loading && !error && !currentTable && (
             <div style={styles.message}>
               「フォルダを開く」をクリックしてマスターデータフォルダを選択してください。
+              {savedFolderName && state.tableNames.length === 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    style={{ fontSize: 13, padding: '6px 14px', cursor: 'pointer', borderRadius: 4, border: '1px solid #ccc' }}
+                    onClick={reopenLastFolder}
+                  >
+                    最近のフォルダ「{savedFolderName}」を開く
+                  </button>
+                </div>
+              )}
             </div>
           )}
           {currentTable && (
