@@ -14,7 +14,7 @@ Every PR created via `gh pr create` must have labels, milestones, and assignees 
 
 ```bash
 gh label list --limit 50 --json name,color,description
-gh milestone list --json title,number,state --state open
+gh api repos/{owner}/{repo}/milestones --jq '.[] | select(.title=="0.1.0") | .title'
 gh api repos/{owner}/{repo} --jq '.owner.login'
 ```
 
@@ -51,7 +51,7 @@ Only select labels that exist in the repo. If no label matches, omit `--label`.
 
 ### 4. Determine milestone
 
-If there are open milestones, pick the one most relevant to the branch or PR content. If only one exists, use it. If none exist, omit `--milestone`.
+Always use `--milestone "0.1.0"`. If that milestone does not exist in the repo, omit `--milestone`.
 
 ### 5. Build and run the `gh pr create` command
 
