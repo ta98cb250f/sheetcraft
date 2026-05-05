@@ -296,7 +296,8 @@ export function TableView({
       const field = fields.find((f) => f.name === fieldName);
       if (!field || field.type === 'computed' || field.editable === false || field.auto) return;
 
-      const selectedRows = (gridRef.current.api.getSelectedRows() as Array<{ _idx: number } & Record<string, unknown>>);
+      const selectedRows = (gridRef.current.api.getSelectedRows() as Array<{ _idx: number } & Record<string, unknown>>)
+        .sort((a, b) => a._idx - b._idx);
       if (selectedRows.length < 2) return;
 
       const firstIdx = selectedRows[0]._idx;
@@ -305,9 +306,9 @@ export function TableView({
         ? (sourceCell as RichCell).value as SimpleCell
         : sourceCell as SimpleCell;
 
+      const fillTargets = new Set(selectedRows.slice(1).map((row) => row._idx));
       const newRecords = table.records.map((r, i) => {
-        const match = selectedRows.slice(1).find((row) => row._idx === i);
-        if (!match) return r;
+        if (!fillTargets.has(i)) return r;
         const existing = r[fieldName] as Cell | undefined;
         if (isRichCell(existing)) {
           return { ...r, [fieldName]: { ...(existing as RichCell), value: sourceValue } };

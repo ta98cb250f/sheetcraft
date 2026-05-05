@@ -55,7 +55,7 @@ export function SearchPanel({ mode, fields, records, onClose, onNavigate, onRepl
   }, [matches, currentIdx, onNavigate]);
 
   const handleReplace = useCallback((all: boolean) => {
-    if (matches.length === 0 || !replaceTerm && replaceTerm !== '') return;
+    if (matches.length === 0) return;
     const targets = all ? matches : (matches[currentIdx] ? [matches[currentIdx]] : []);
     onReplace(targets, replaceTerm, all);
   }, [matches, currentIdx, replaceTerm, onReplace]);
