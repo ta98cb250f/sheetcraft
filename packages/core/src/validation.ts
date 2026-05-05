@@ -11,6 +11,7 @@ import type {
 import { isRichCell } from './types.js';
 import { resolveFields } from './schema.js';
 import type { BaseFieldsConfig } from './types.js';
+import { computeRecord, detectComputedCycles } from './formula.js';
 
 function getCellValue(cell: Cell | Cell[] | undefined): unknown {
   if (cell === undefined || cell === null) return undefined;
@@ -72,6 +73,9 @@ export function validateTable(
           if (vr.max !== undefined && value > vr.max) {
             errors.push({ table: table.table, recordIndex, field: field.name, message: `最大値 ${vr.max} を超えています（値: ${value}）` });
           }
+        }
+        if (Array.isArray(value) && vr.max_length !== undefined && value.length > vr.max_length) {
+          errors.push({ table: table.table, recordIndex, field: field.name, message: `最大要素数 ${vr.max_length} を超えています（${value.length} 要素）` });
         }
         if (typeof value === 'string') {
           if (vr.max_length !== undefined && value.length > vr.max_length) {
@@ -142,6 +146,28 @@ export function validateTable(
       }
     }
   });
+
+  // 5-4: Circular reference detection (table-level, checked once)
+  const cyclicFields = detectComputedCycles(fields);
+  for (const fieldName of cyclicFields) {
+    errors.push({
+      table: table.table,
+      recordIndex: -1,
+      field: fieldName,
+      message: `computed フィールド "${fieldName}" に循環参照があります`,
+    });
+  }
+
+  // 5-3: Formula errors per record (skip when circular refs present to avoid noise)
+  if (cyclicFields.length === 0) {
+    table.records.forEach((record, recordIndex) => {
+      const formulaErrors: Array<{ field: string; message: string }> = [];
+      computeRecord(record, fields, opts.refTables, formulaErrors);
+      for (const fe of formulaErrors) {
+        errors.push({ table: table.table, recordIndex, field: fe.field, message: `式エラー: ${fe.message}` });
+      }
+    });
+  }
 
   return { errors, warnings, valid: errors.length === 0 };
 }

@@ -25,6 +25,7 @@ import type {
 } from '@sheetcraft/core';
 import { isRichCell, resolveFields, computeRecord } from '@sheetcraft/core';
 import { CellDetailPanel } from './CellDetailPanel.js';
+import { SearchPanel } from './SearchPanel.js';
 
 type Props = {
   table: TableFile;
@@ -74,12 +75,16 @@ function parseValue(raw: unknown, field: FieldDef): Cell {
   return raw as Cell;
 }
 
+type SearchState = { show: boolean; mode: 'search' | 'replace' };
+
 export function TableView({
   table, enums, cellColors, baseFields, validation, onSave, onAddRow, onDeleteRow,
 }: Props) {
   const gridRef = useRef<AgGridReact>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
+  const [searchState, setSearchState] = useState<SearchState | null>(null);
+  const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
 
   const fields = useMemo(() => {
     return baseFields ? resolveFields(table.fields, baseFields) : table.fields;
@@ -121,7 +126,6 @@ export function TableView({
         }
       }
 
-      // Capture records reference for comment marker renderer
       const records = table.records;
       const CommentCellRenderer = (params: ICellRendererParams) => {
         const rowIdx = (params.data as { _idx: number })._idx;
@@ -152,6 +156,7 @@ export function TableView({
         cellRenderer: CommentCellRenderer,
         headerClass: f.export === false ? 'col-no-export' : '',
         rowDrag: i === 0,
+        pinned: pinnedColumns.has(f.name) ? ('left' as const) : undefined,
         cellStyle: (params: { data: { _idx: number } }) => {
           const rowIdx = params.data._idx;
           const hasError = validation?.errors.some(
@@ -167,7 +172,7 @@ export function TableView({
         },
       };
     });
-  }, [fields, enums, validation, table.records]);
+  }, [fields, enums, validation, table.records, pinnedColumns]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -250,15 +255,23 @@ export function TableView({
     e.preventDefault();
   }, [fields, table, onSave]);
 
-  // Ctrl+C copy: multiple selected rows as TSV, or single focused cell
+  // Keyboard: Ctrl+C (multi-row copy), Ctrl+D (fill-down), Ctrl+F/H (search), Delete (row)
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!gridRef.current?.api) return;
     const editing = gridRef.current.api.getEditingCells().length > 0;
+    const mod = e.ctrlKey || e.metaKey;
 
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editing) {
+    // Ctrl+F / Ctrl+H → search/replace panel
+    if (mod && (e.key === 'f' || e.key === 'h') && !editing) {
+      setSearchState({ show: true, mode: e.key === 'h' ? 'replace' : 'search' });
+      e.preventDefault();
+      return;
+    }
+
+    // Ctrl+C → copy
+    if (mod && e.key === 'c' && !editing) {
       const selectedRows = gridRef.current.api.getSelectedRows() as Array<{ _idx: number } & Record<string, unknown>>;
       if (selectedRows.length > 1) {
-        // Multi-row copy: all field values as TSV
         const tsv = selectedRows.map((row) =>
           fields.map((f) => String(row[f.name] ?? '')).join('\t')
         ).join('\n');
@@ -266,7 +279,6 @@ export function TableView({
         e.preventDefault();
         return;
       }
-
       const fc = gridRef.current.api.getFocusedCell();
       if (!fc) return;
       const row = gridRef.current.api.getDisplayedRowAtIndex(fc.rowIndex);
@@ -276,6 +288,37 @@ export function TableView({
       e.preventDefault();
     }
 
+    // Ctrl+D → fill down: copy focused column value of first selected row to all other selected rows
+    if (mod && e.key === 'd' && !editing) {
+      const fc = gridRef.current.api.getFocusedCell();
+      if (!fc) return;
+      const fieldName = fc.column.getColId();
+      const field = fields.find((f) => f.name === fieldName);
+      if (!field || field.type === 'computed' || field.editable === false || field.auto) return;
+
+      const selectedRows = (gridRef.current.api.getSelectedRows() as Array<{ _idx: number } & Record<string, unknown>>);
+      if (selectedRows.length < 2) return;
+
+      const firstIdx = selectedRows[0]._idx;
+      const sourceCell = table.records[firstIdx]?.[fieldName] as Cell | undefined;
+      const sourceValue: SimpleCell = isRichCell(sourceCell)
+        ? (sourceCell as RichCell).value as SimpleCell
+        : sourceCell as SimpleCell;
+
+      const newRecords = table.records.map((r, i) => {
+        const match = selectedRows.slice(1).find((row) => row._idx === i);
+        if (!match) return r;
+        const existing = r[fieldName] as Cell | undefined;
+        if (isRichCell(existing)) {
+          return { ...r, [fieldName]: { ...(existing as RichCell), value: sourceValue } };
+        }
+        return { ...r, [fieldName]: sourceValue };
+      });
+      onSave({ ...table, records: newRecords });
+      e.preventDefault();
+    }
+
+    // Delete → delete selected row
     if (e.key === 'Delete' && !editing) {
       if (selectedRow !== null) {
         onDeleteRow(selectedRow);
@@ -284,7 +327,7 @@ export function TableView({
         e.preventDefault();
       }
     }
-  }, [selectedRow, onDeleteRow, fields]);
+  }, [selectedRow, onDeleteRow, fields, table, onSave]);
 
   const updateCellRich = useCallback((rowIdx: number, fieldName: string, patch: Partial<RichCell>) => {
     const newRecords = table.records.map((r, i) => {
@@ -303,6 +346,7 @@ export function TableView({
         : null;
       const fieldName = params.column?.getColId() ?? null;
       const field = fieldName ? fields.find((f) => f.name === fieldName) : null;
+      const isPinned = fieldName ? pinnedColumns.has(fieldName) : false;
 
       const colorItems: MenuItemDef[] = cellColors
         ? Object.entries(cellColors.cell_colors).map(([key, def]) => ({
@@ -349,6 +393,23 @@ export function TableView({
             ]
           : [];
 
+      const pinItem: (string | MenuItemDef)[] = fieldName
+        ? [
+            'separator',
+            {
+              name: isPinned ? 'この列の固定を解除' : 'この列を左に固定',
+              action: () => {
+                setPinnedColumns((prev) => {
+                  const next = new Set(prev);
+                  if (isPinned) next.delete(fieldName);
+                  else next.add(fieldName);
+                  return next;
+                });
+              },
+            },
+          ]
+        : [];
+
       return [
         { name: '行を追加', action: onAddRow },
         ...(rowIdx !== null
@@ -363,11 +424,12 @@ export function TableView({
           : []),
         ...richCellItems,
         ...overrideItem,
+        ...pinItem,
         'separator',
         'copy',
       ];
     },
-    [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich, fields]
+    [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich, fields, pinnedColumns]
   );
 
   // Row drag: sync new order back to records
@@ -383,6 +445,38 @@ export function TableView({
     onSave({ ...table, records: newRecords });
   }, [table, onSave]);
 
+  // Search panel: navigate to match cell
+  const handleSearchNavigate = useCallback((rowIdx: number, fieldName: string) => {
+    if (!gridRef.current?.api) return;
+    gridRef.current.api.ensureIndexVisible(rowIdx);
+    gridRef.current.api.setFocusedCell(rowIdx, fieldName);
+  }, []);
+
+  // Search panel: replace matches
+  const handleSearchReplace = useCallback(
+    (matches: Array<{ rowIdx: number; fieldName: string }>, newValue: string) => {
+      if (matches.length === 0) return;
+      const newRecords = [...table.records];
+      for (const { rowIdx, fieldName } of matches) {
+        const field = fields.find((f) => f.name === fieldName);
+        if (!field || field.type === 'computed' || field.editable === false || field.auto) continue;
+        const existing = newRecords[rowIdx][fieldName] as Cell | undefined;
+        const parsed = parseValue(newValue, field);
+        if (isRichCell(existing)) {
+          newRecords[rowIdx] = { ...newRecords[rowIdx], [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
+        } else {
+          newRecords[rowIdx] = { ...newRecords[rowIdx], [fieldName]: parsed };
+        }
+      }
+      onSave({ ...table, records: newRecords });
+    },
+    [table, fields, onSave]
+  );
+
+  // Table-level validation errors (recordIndex === -1)
+  const tableErrors = validation?.errors.filter((e) => e.recordIndex === -1) ?? [];
+  const recordErrors = validation?.errors.filter((e) => e.recordIndex >= 0) ?? [];
+
   return (
     <div
       style={styles.container}
@@ -390,7 +484,7 @@ export function TableView({
       onKeyDown={handleKeyDown}
       tabIndex={-1}
     >
-      <div className="ag-theme-alpine" style={styles.grid}>
+      <div className="ag-theme-alpine" style={{ ...styles.grid, position: 'relative' }}>
         <AgGridReact
           ref={gridRef}
           rowData={rowData}
@@ -405,6 +499,16 @@ export function TableView({
           stopEditingWhenCellsLoseFocus
           getContextMenuItems={getContextMenuItems}
         />
+        {searchState?.show && (
+          <SearchPanel
+            mode={searchState.mode}
+            fields={fields}
+            records={table.records}
+            onClose={() => setSearchState(null)}
+            onNavigate={handleSearchNavigate}
+            onReplace={handleSearchReplace}
+          />
+        )}
       </div>
       <CellDetailPanel
         fieldName={selectedField}
@@ -412,9 +516,14 @@ export function TableView({
         cellColors={cellColors}
         onUpdate={handleCellUpdate}
       />
-      {validation && (validation.errors.length > 0 || validation.warnings.length > 0) && (
+      {validation && (tableErrors.length > 0 || recordErrors.length > 0 || validation.warnings.length > 0) && (
         <div style={styles.messagePanel}>
-          {validation.errors.map((err, i) => (
+          {tableErrors.map((err, i) => (
+            <div key={`te${i}`} style={styles.errorItem}>
+              ✕ [テーブル] {err.field}: {err.message}
+            </div>
+          ))}
+          {recordErrors.map((err, i) => (
             <div key={`e${i}`} style={styles.errorItem}>
               ✕ 行{err.recordIndex + 1} / {err.field}: {err.message}
             </div>

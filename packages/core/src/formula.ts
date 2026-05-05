@@ -356,10 +356,47 @@ export function evaluate(
   return parser.parse();
 }
 
+export function detectComputedCycles(fields: import('./types.js').FieldDef[]): string[] {
+  const computedNames = new Set(
+    fields.filter((f) => f.type === 'computed').map((f) => f.name)
+  );
+  if (computedNames.size === 0) return [];
+
+  const deps = new Map<string, Set<string>>();
+  for (const f of fields) {
+    if (f.type !== 'computed') continue;
+    const formula = f.formula ?? '';
+    const fieldDeps = new Set<string>();
+    for (const cf of computedNames) {
+      if (new RegExp(`\\b${cf}\\b`).test(formula)) fieldDeps.add(cf);
+    }
+    deps.set(f.name, fieldDeps);
+  }
+
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const cyclic = new Set<string>();
+
+  function dfs(name: string) {
+    visited.add(name);
+    inStack.add(name);
+    for (const dep of deps.get(name) ?? []) {
+      if (!visited.has(dep)) dfs(dep);
+      if (inStack.has(dep)) { cyclic.add(dep); cyclic.add(name); }
+    }
+    inStack.delete(name);
+  }
+  for (const name of deps.keys()) {
+    if (!visited.has(name)) dfs(name);
+  }
+  return [...cyclic];
+}
+
 export function computeRecord(
   record: Record,
   fields: import('./types.js').FieldDef[],
-  refTables?: Map<string, TableFile>
+  refTables?: Map<string, TableFile>,
+  formulaErrors?: Array<{ field: string; message: string }>
 ): Record {
   const result: Record = { ...record };
   for (const field of fields) {
@@ -369,12 +406,20 @@ export function computeRecord(
       const rich = cell as import('./types.js').RichCell;
       if (rich.value !== undefined) { result[field.name] = rich.value; continue; }
       if (rich.override) {
-        result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
+        try {
+          result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
+        } catch (e) {
+          if (formulaErrors && e instanceof FormulaError) formulaErrors.push({ field: field.name, message: e.message });
+        }
         continue;
       }
     }
     if (field.formula) {
-      result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
+      try {
+        result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
+      } catch (e) {
+        if (formulaErrors && e instanceof FormulaError) formulaErrors.push({ field: field.name, message: e.message });
+      }
     }
   }
   return result;
