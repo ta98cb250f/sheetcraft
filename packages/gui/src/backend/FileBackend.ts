@@ -9,6 +9,10 @@ declare global {
   interface Window {
     showDirectoryPicker(options?: { mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle>;
   }
+  interface FileSystemHandle {
+    queryPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>;
+    requestPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>;
+  }
 }
 
 export class LocalFileBackend implements FileBackend {
@@ -16,6 +20,18 @@ export class LocalFileBackend implements FileBackend {
 
   async open(): Promise<void> {
     this.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  }
+
+  openWithHandle(handle: FileSystemDirectoryHandle): void {
+    this.dirHandle = handle;
+  }
+
+  getHandle(): FileSystemDirectoryHandle | null {
+    return this.dirHandle;
+  }
+
+  getName(): string | null {
+    return this.dirHandle?.name ?? null;
   }
 
   private ensureOpen(): FileSystemDirectoryHandle {
