@@ -229,7 +229,7 @@ export function TableView({
       const row = gridRef.current.api.getDisplayedRowAtIndex(fc.rowIndex);
       if (!row?.data) return;
       const val = (row.data as MasterRecord)[fc.column.getColId()];
-      navigator.clipboard.writeText(String(val ?? '')).catch(() => {});
+      navigator.clipboard.writeText(String(val ?? '')).catch((err) => console.warn('clipboard write failed:', err));
       e.preventDefault();
     }
 

@@ -3,14 +3,14 @@ import { useProject } from './hooks/useProject.js';
 import { Toolbar } from './components/Toolbar.js';
 import { TableList } from './components/TableList.js';
 import { TableView } from './components/TableView.js';
-import { validateTable as validateTableFn } from '@sheetcraft/core';
+import { validateTable as validateTableFn, isRichCell } from '@sheetcraft/core';
 import type { TableFile, ValidationResult, Cell } from '@sheetcraft/core';
 
 const MAX_HISTORY = 50;
 
-function getCellValue(cell: Cell | Cell[] | undefined): number {
+function getNumericCellValue(cell: Cell | Cell[] | undefined): number {
   if (typeof cell === 'number') return cell;
-  if (typeof cell === 'object' && cell !== null && !Array.isArray(cell)) {
+  if (cell !== null && !Array.isArray(cell) && isRichCell(cell as Cell)) {
     if (typeof (cell as { value?: unknown }).value === 'number') return (cell as { value: number }).value;
   }
   return 0;
@@ -45,16 +45,20 @@ export function App() {
       }));
     }, 300);
     return () => clearTimeout(timer);
-  }, [currentTable]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentTable, state.baseFields, state.enums, state.tables]);
 
   const handleTableChange = useCallback((updated: TableFile, skipHistory = false) => {
-    if (!skipHistory && pendingTable) {
-      historyRef.current = [...historyRef.current.slice(-MAX_HISTORY), pendingTable];
-      futureRef.current = [];
+    if (!skipHistory) {
+      // Use pendingTable if dirty, otherwise the last saved version — ensures first edit is undoable
+      const base = pendingTable ?? (state.selectedTable ? state.tables.get(state.selectedTable) ?? null : null);
+      if (base) {
+        historyRef.current = [...historyRef.current.slice(-MAX_HISTORY), base];
+        futureRef.current = [];
+      }
     }
     setPendingTable(updated);
     setDirty(true);
-  }, [pendingTable]);
+  }, [pendingTable, state.selectedTable, state.tables]);
 
   const handleUndo = useCallback(() => {
     const hist = historyRef.current;
@@ -110,7 +114,7 @@ export function App() {
   const handleAddRow = useCallback(() => {
     if (!currentTable) return;
     const maxId = currentTable.records.reduce((m, r) => {
-      const v = getCellValue(r['id'] as Cell | undefined);
+      const v = getNumericCellValue(r['id'] as Cell | undefined);
       return v > m ? v : m;
     }, 0);
     const newRecord = { id: maxId + 1, version: 1 };
