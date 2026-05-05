@@ -1,0 +1,19 @@
+{
+  "name": "@sheetcraft/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "masterdata-tool": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@sheetcraft/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

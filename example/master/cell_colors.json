@@ -1,0 +1,8 @@
+{
+  "cell_colors": {
+    "red":    { "hex": "#FF6B6B", "label": "要修正" },
+    "yellow": { "hex": "#FFD93D", "label": "確認中" },
+    "blue":   { "hex": "#6BCB77", "label": "仮置き" },
+    "green":  { "hex": "#4D96FF", "label": "確定済" }
+  }
+}

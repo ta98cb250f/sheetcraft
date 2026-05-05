@@ -1,0 +1,15 @@
+{
+  "name": "sheetcraft",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "packages/gui",
+    "packages/cli"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w packages/gui",
+    "test": "npm test -w packages/core",
+    "build": "npm run build -w packages/core && npm run build -w packages/gui && npm run build -w packages/cli"
+  }
+}
