@@ -1,0 +1,21 @@
+{
+  "base_fields": [
+    {
+      "name": "id",
+      "type": "int",
+      "display_name": "ID",
+      "primary": true,
+      "editable": false,
+      "auto": "increment",
+      "export": true
+    },
+    {
+      "name": "version",
+      "type": "int",
+      "display_name": "バージョン",
+      "editable": false,
+      "auto": "timestamp_version",
+      "export": true
+    }
+  ]
+}

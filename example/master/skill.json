@@ -1,0 +1,14 @@
+{
+  "table": "skill",
+  "display_name": "skill",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "display_name": "名前",
+      "required": true,
+      "export": true
+    }
+  ],
+  "records": []
+}

@@ -1,0 +1,12 @@
+{
+  "enums": {
+    "rarity": {
+      "display_name": "レアリティ",
+      "values": ["N", "R", "SR", "SSR"]
+    },
+    "element": {
+      "display_name": "属性",
+      "values": ["火", "水", "木", "光", "闇"]
+    }
+  }
+}
