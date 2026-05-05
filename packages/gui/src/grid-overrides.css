@@ -1,0 +1,4 @@
+/* フォーカスセル強調 — inset box-shadow はクリップされず border/outline と干渉しない */
+.ag-theme-alpine .ag-cell-focus:not(.ag-cell-inline-editing) {
+  box-shadow: inset 0 0 0 3px #1976d2 !important;
+}

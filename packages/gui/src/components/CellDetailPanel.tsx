@@ -6,9 +6,10 @@ type Props = {
   cell: Cell | null;
   cellColors: CellColorsConfig | null;
   onUpdate: (cell: Cell) => void;
+  readonly?: boolean;
 };
 
-export function CellDetailPanel({ fieldName, cell, cellColors, onUpdate }: Props) {
+export function CellDetailPanel({ fieldName, cell, cellColors, onUpdate, readonly = false }: Props) {
   if (!fieldName || cell === null) {
     return (
       <div style={styles.panel}>
@@ -39,9 +40,10 @@ export function CellDetailPanel({ fieldName, cell, cellColors, onUpdate }: Props
       <div style={styles.row}>
         <label style={styles.label}>値</label>
         <input
-          style={styles.input}
+          style={{ ...styles.input, ...(readonly ? { background: '#f5f5f5', color: '#888' } : {}) }}
           value={String(value ?? '')}
-          onChange={(e) => {
+          readOnly={readonly}
+          onChange={readonly ? undefined : (e) => {
             const raw = e.target.value;
             const num = Number(raw);
             const newVal = raw === '' ? undefined : isNaN(num) ? raw : num;

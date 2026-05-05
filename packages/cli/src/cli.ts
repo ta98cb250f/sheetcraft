@@ -8,6 +8,7 @@ import {
   validateMultipleTables,
   exportToJSON,
   exportToCSV,
+  exportToMsgPack,
 } from '@sheetcraft/core';
 import type { TableFile, EnumsConfig, BaseFieldsConfig } from '@sheetcraft/core';
 
@@ -78,8 +79,14 @@ async function cmdExport(masterDir: string, format: string, outDir: string): Pro
     } else if (format === 'csv') {
       content = exportToCSV(table, { baseFields: baseFields ?? undefined, refTables });
       ext = 'csv';
+    } else if (format === 'msgpack') {
+      const bytes = exportToMsgPack(table, { baseFields: baseFields ?? undefined, refTables });
+      const outFile = join(out, `${table.table}.msgpack`);
+      await writeFile(outFile, Buffer.from(bytes));
+      console.log(`  出力: ${outFile}`);
+      continue;
     } else {
-      console.error(`未対応フォーマット: ${format}（対応: json, csv）`);
+      console.error(`未対応フォーマット: ${format}（対応: json, csv, msgpack）`);
       process.exit(1);
     }
 
@@ -136,7 +143,7 @@ masterdata-tool — マスターデータ管理ツール
 
 コマンド:
   validate <dir>                      バリデーション（CIで使用）
-  export <dir> -f <fmt> -o <out-dir>  エクスポート（json | csv）
+  export <dir> -f <fmt> -o <out-dir>  エクスポート（json | csv | msgpack）
   new <dir> <table-name>              テーブル新規作成
 `);
       process.exit(0);

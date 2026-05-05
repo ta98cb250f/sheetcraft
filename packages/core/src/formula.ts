@@ -255,6 +255,91 @@ class Parser {
           return row ? getCellScalar(row[column] as Cell | undefined) : undefined;
         });
       }
+      // Math functions
+      case 'abs': {
+        if (args.length !== 1) throw new FormulaError('abs() requires 1 argument');
+        return Math.abs(args[0] as number);
+      }
+      case 'round': {
+        if (args.length < 1 || args.length > 2) throw new FormulaError('round() requires 1 or 2 arguments');
+        const decimals = args.length === 2 ? (args[1] as number) : 0;
+        const factor = Math.pow(10, decimals);
+        return Math.round((args[0] as number) * factor) / factor;
+      }
+      case 'floor': {
+        if (args.length !== 1) throw new FormulaError('floor() requires 1 argument');
+        return Math.floor(args[0] as number);
+      }
+      case 'ceil': {
+        if (args.length !== 1) throw new FormulaError('ceil() requires 1 argument');
+        return Math.ceil(args[0] as number);
+      }
+      case 'pow': {
+        if (args.length !== 2) throw new FormulaError('pow() requires 2 arguments');
+        return Math.pow(args[0] as number, args[1] as number);
+      }
+      case 'sqrt': {
+        if (args.length !== 1) throw new FormulaError('sqrt() requires 1 argument');
+        return Math.sqrt(args[0] as number);
+      }
+      // String functions
+      case 'upper': {
+        if (args.length !== 1) throw new FormulaError('upper() requires 1 argument');
+        return String(args[0]).toUpperCase();
+      }
+      case 'lower': {
+        if (args.length !== 1) throw new FormulaError('lower() requires 1 argument');
+        return String(args[0]).toLowerCase();
+      }
+      case 'trim': {
+        if (args.length !== 1) throw new FormulaError('trim() requires 1 argument');
+        return String(args[0]).trim();
+      }
+      case 'substr': {
+        if (args.length < 2 || args.length > 3) throw new FormulaError('substr() requires 2 or 3 arguments');
+        const s = String(args[0]);
+        const start = args[1] as number;
+        return args.length === 3 ? s.slice(start, start + (args[2] as number)) : s.slice(start);
+      }
+      case 'replace': {
+        if (args.length !== 3) throw new FormulaError('replace() requires 3 arguments');
+        return String(args[0]).split(String(args[1])).join(String(args[2]));
+      }
+      // Type conversion
+      case 'int': {
+        if (args.length !== 1) throw new FormulaError('int() requires 1 argument');
+        return Math.trunc(Number(args[0]));
+      }
+      case 'float': {
+        if (args.length !== 1) throw new FormulaError('float() requires 1 argument');
+        return Number(args[0]);
+      }
+      case 'str': {
+        if (args.length !== 1) throw new FormulaError('str() requires 1 argument');
+        return String(args[0]);
+      }
+      // Logic functions (function form)
+      case 'and': {
+        if (args.length === 0) throw new FormulaError('and() requires at least 1 argument');
+        return args.every((a) => Boolean(a));
+      }
+      case 'or': {
+        if (args.length === 0) throw new FormulaError('or() requires at least 1 argument');
+        return args.some((a) => Boolean(a));
+      }
+      // List functions
+      case 'contains': {
+        if (args.length !== 2) throw new FormulaError('contains() requires 2 arguments');
+        if (Array.isArray(args[0])) return (args[0] as unknown[]).includes(args[1]);
+        if (typeof args[0] === 'string') return (args[0] as string).includes(String(args[1]));
+        return false;
+      }
+      case 'size': {
+        if (args.length !== 1) throw new FormulaError('size() requires 1 argument');
+        if (Array.isArray(args[0])) return (args[0] as unknown[]).length;
+        if (typeof args[0] === 'string') return (args[0] as string).length;
+        return 0;
+      }
       default:
         throw new FormulaError(`Unknown function: ${name}`);
     }
@@ -271,10 +356,50 @@ export function evaluate(
   return parser.parse();
 }
 
+export function detectComputedCycles(fields: import('./types.js').FieldDef[]): string[] {
+  const computedNames = new Set(
+    fields.filter((f) => f.type === 'computed').map((f) => f.name)
+  );
+  if (computedNames.size === 0) return [];
+
+  const namePatterns = new Map<string, RegExp>();
+  for (const cf of computedNames) namePatterns.set(cf, new RegExp(`\\b${cf}\\b`));
+
+  const deps = new Map<string, Set<string>>();
+  for (const f of fields) {
+    if (f.type !== 'computed') continue;
+    const formula = f.formula ?? '';
+    const fieldDeps = new Set<string>();
+    for (const cf of computedNames) {
+      if (namePatterns.get(cf)!.test(formula)) fieldDeps.add(cf);
+    }
+    deps.set(f.name, fieldDeps);
+  }
+
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const cyclic = new Set<string>();
+
+  function dfs(name: string) {
+    visited.add(name);
+    inStack.add(name);
+    for (const dep of deps.get(name) ?? []) {
+      if (!visited.has(dep)) dfs(dep);
+      if (inStack.has(dep)) { cyclic.add(dep); cyclic.add(name); }
+    }
+    inStack.delete(name);
+  }
+  for (const name of deps.keys()) {
+    if (!visited.has(name)) dfs(name);
+  }
+  return [...cyclic];
+}
+
 export function computeRecord(
   record: Record,
   fields: import('./types.js').FieldDef[],
-  refTables?: Map<string, TableFile>
+  refTables?: Map<string, TableFile>,
+  formulaErrors?: Array<{ field: string; message: string }>
 ): Record {
   const result: Record = { ...record };
   for (const field of fields) {
@@ -284,12 +409,28 @@ export function computeRecord(
       const rich = cell as import('./types.js').RichCell;
       if (rich.value !== undefined) { result[field.name] = rich.value; continue; }
       if (rich.override) {
-        result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
+        try {
+          result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
+        } catch (e) {
+          if (e instanceof FormulaError) {
+            if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
+          } else {
+            console.warn(`Unexpected error evaluating override for "${field.name}":`, e);
+          }
+        }
         continue;
       }
     }
     if (field.formula) {
-      result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
+      try {
+        result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
+      } catch (e) {
+        if (e instanceof FormulaError) {
+          if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
+        } else {
+          console.warn(`Unexpected error evaluating formula "${field.formula}":`, e);
+        }
+      }
     }
   }
   return result;
