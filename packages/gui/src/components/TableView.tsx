@@ -8,6 +8,7 @@ import type {
   CellClickedEvent,
   GetContextMenuItemsParams,
   MenuItemDef,
+  ICellRendererParams,
 } from 'ag-grid-community';
 import type {
   TableFile,
@@ -44,6 +45,13 @@ function getCellDisplayValue(cell: Cell | Cell[] | undefined): unknown {
     return '';
   }
   return cell;
+}
+
+function toRichCell(cell: Cell | undefined, patch: Partial<RichCell>): RichCell {
+  if (isRichCell(cell as Cell)) {
+    return { ...(cell as RichCell), ...patch };
+  }
+  return { value: cell as SimpleCell, ...patch };
 }
 
 function parseValue(raw: unknown, field: FieldDef): Cell {
@@ -112,6 +120,27 @@ export function TableView({
         }
       }
 
+      // Capture records reference for comment marker renderer
+      const records = table.records;
+      const CommentCellRenderer = (params: ICellRendererParams) => {
+        const rowIdx = (params.data as { _idx: number })._idx;
+        const raw = records[rowIdx]?.[f.name];
+        const hasComment = isRichCell(raw as Cell) && !!(raw as RichCell).comment;
+        const val = String(params.value ?? '');
+        if (!hasComment) return val;
+        return (
+          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <div style={{
+              position: 'absolute', top: 0, right: 0,
+              width: 0, height: 0, borderStyle: 'solid',
+              borderWidth: '0 7px 7px 0',
+              borderColor: 'transparent #f57c00 transparent transparent',
+            }} title={(raw as RichCell).comment ?? ''} />
+            {val}
+          </div>
+        );
+      };
+
       return {
         field: f.name,
         headerName: f.display_name ?? f.name,
@@ -119,6 +148,7 @@ export function TableView({
         flex: 1,
         minWidth: 60,
         cellEditorSelector,
+        cellRenderer: CommentCellRenderer,
         headerClass: f.export === false ? 'col-no-export' : '',
         cellStyle: (params: { data: { _idx: number } }) => {
           const rowIdx = params.data._idx;
@@ -135,7 +165,7 @@ export function TableView({
         },
       };
     });
-  }, [fields, enums, validation]);
+  }, [fields, enums, validation, table.records]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -243,12 +273,53 @@ export function TableView({
     }
   }, [selectedRow, onDeleteRow]);
 
+  const updateCellRich = useCallback((rowIdx: number, fieldName: string, patch: Partial<RichCell>) => {
+    const newRecords = table.records.map((r, i) => {
+      if (i !== rowIdx) return r;
+      const cell = r[fieldName] as Cell | undefined;
+      return { ...r, [fieldName]: toRichCell(cell, patch) };
+    });
+    onSave({ ...table, records: newRecords });
+  }, [table, onSave]);
+
   // Right-click context menu
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams): (string | MenuItemDef)[] => {
       const rowIdx = params.node
         ? (params.node.data as { _idx: number })._idx
         : null;
+      const fieldName = params.column?.getColId() ?? null;
+
+      const colorItems: MenuItemDef[] = cellColors
+        ? Object.entries(cellColors.cell_colors).map(([key, def]) => ({
+            name: `<span style="display:inline-block;width:12px;height:12px;background:${def.hex};border:1px solid #999;border-radius:2px;margin-right:6px;vertical-align:middle"></span>${def.label ?? key}`,
+            action: () => {
+              if (rowIdx !== null && fieldName) updateCellRich(rowIdx, fieldName, { color: key });
+            },
+          }))
+        : [];
+
+      const richCellItems: (string | MenuItemDef)[] =
+        rowIdx !== null && fieldName
+          ? [
+              'separator',
+              {
+                name: '色を設定',
+                disabled: colorItems.length === 0,
+                subMenu: colorItems.length > 0 ? colorItems : undefined,
+              },
+              {
+                name: 'コメントを編集',
+                action: () => {
+                  const existing = table.records[rowIdx]?.[fieldName];
+                  const current = isRichCell(existing as Cell) ? (existing as RichCell).comment ?? '' : '';
+                  const result = window.prompt('コメントを入力してください:', current);
+                  if (result !== null) updateCellRich(rowIdx, fieldName, { comment: result || undefined });
+                },
+              },
+            ]
+          : [];
+
       return [
         { name: '行を追加', action: onAddRow },
         ...(rowIdx !== null
@@ -261,11 +332,12 @@ export function TableView({
               },
             }]
           : []),
+        ...richCellItems,
         'separator',
         'copy',
       ];
     },
-    [onAddRow, onDeleteRow]
+    [onAddRow, onDeleteRow, cellColors, table.records, updateCellRich]
   );
 
   return (

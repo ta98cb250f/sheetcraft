@@ -1,18 +1,17 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { LocalFileBackend } from '../backend/FileBackend.js';
+import { saveHandle, loadHandle } from '../lib/folderStorage.js';
 import {
   parseTableFile,
   parseEnumsConfig,
   parseCellColorsConfig,
   parseBaseFieldsConfig,
-  validateTable,
 } from '@sheetcraft/core';
 import type {
   TableFile,
   EnumsConfig,
   CellColorsConfig,
   BaseFieldsConfig,
-  ValidationResult,
 } from '@sheetcraft/core';
 
 export type ProjectState = {
@@ -38,19 +37,7 @@ export function useProject() {
   const [state, setState] = useState<ProjectState>(initialState);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const openFolder = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await backend.open();
-      await reload();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [backend]);
+  const [savedFolderName, setSavedFolderName] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const files = await backend.listFiles();
@@ -83,6 +70,69 @@ export function useProject() {
     }));
   }, [backend]);
 
+  // On mount: try to restore last folder handle from IndexedDB
+  useEffect(() => {
+    void (async () => {
+      const handle = await loadHandle();
+      if (!handle) return;
+      setSavedFolderName(handle.name);
+      // Check if permission is already granted (doesn't prompt user)
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') {
+        backend.openWithHandle(handle);
+        setLoading(true);
+        try {
+          await reload();
+        } catch {
+          // silently ignore — user can open manually
+        } finally {
+          setLoading(false);
+        }
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openFolder = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await backend.open();
+      const handle = backend.getHandle();
+      if (handle) {
+        setSavedFolderName(handle.name);
+        await saveHandle(handle);
+      }
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [backend, reload]);
+
+  // Reopen the saved folder with a user gesture (requests permission if needed)
+  const reopenLastFolder = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const handle = await loadHandle();
+      if (!handle) return;
+      const perm = await handle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        setError('フォルダへのアクセスが許可されませんでした');
+        return;
+      }
+      backend.openWithHandle(handle);
+      setSavedFolderName(handle.name);
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [backend, reload]);
+
   const selectTable = useCallback((filename: string) => {
     setState((prev) => ({ ...prev, selectedTable: filename }));
   }, []);
@@ -97,27 +147,14 @@ export function useProject() {
     });
   }, [backend]);
 
-  const validateCurrentTable = useCallback((): ValidationResult | null => {
-    if (!state.selectedTable) return null;
-    const table = state.tables.get(state.selectedTable);
-    if (!table) return null;
-    const refTables = new Map(
-      [...state.tables.values()].map((t) => [t.table, t])
-    );
-    return validateTable(table, {
-      baseFields: state.baseFields ?? undefined,
-      enums: state.enums ?? undefined,
-      refTables,
-    });
-  }, [state]);
-
   return {
     state,
     loading,
     error,
+    savedFolderName,
     openFolder,
+    reopenLastFolder,
     selectTable,
     saveTable,
-    validateCurrentTable,
   };
 }

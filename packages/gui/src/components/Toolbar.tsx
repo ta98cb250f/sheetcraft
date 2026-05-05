@@ -7,7 +7,9 @@ type Props = {
   canUndo: boolean;
   canRedo: boolean;
   validation: ValidationResult | null;
+  savedFolderName: string | null;
   onOpenFolder: () => void;
+  onReopenLastFolder: () => void;
   onSave: () => void;
   onAddRow: () => void;
   onUndo: () => void;
@@ -16,7 +18,7 @@ type Props = {
 
 export function Toolbar({
   hasFolder, hasTable, isDirty, canUndo, canRedo, validation,
-  onOpenFolder, onSave, onAddRow, onUndo, onRedo,
+  savedFolderName, onOpenFolder, onReopenLastFolder, onSave, onAddRow, onUndo, onRedo,
 }: Props) {
   const errorCount = validation?.errors.length ?? 0;
   const warnCount = validation?.warnings.length ?? 0;
@@ -28,6 +30,11 @@ export function Toolbar({
         <button style={styles.btn} onClick={onOpenFolder}>
           フォルダを開く
         </button>
+        {!hasFolder && savedFolderName && (
+          <button style={styles.btn} onClick={onReopenLastFolder} title={`最近のフォルダ: ${savedFolderName}`}>
+            再度開く: {savedFolderName}
+          </button>
+        )}
         {hasFolder && hasTable && (
           <>
             <div style={styles.separator} />
