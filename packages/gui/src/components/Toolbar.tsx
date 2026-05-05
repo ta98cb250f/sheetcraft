@@ -15,13 +15,12 @@ type Props = {
   onUndo: () => void;
   onRedo: () => void;
   onExportJSON: () => void;
-  onExportCSV: () => void;
 };
 
 export function Toolbar({
   hasFolder, hasTable, isDirty, canUndo, canRedo, validation,
   savedFolderName, onOpenFolder, onReopenLastFolder, onSave, onAddRow, onUndo, onRedo,
-  onExportJSON, onExportCSV,
+  onExportJSON,
 }: Props) {
   const errorCount = validation?.errors.length ?? 0;
   const warnCount = validation?.warnings.length ?? 0;
@@ -61,9 +60,6 @@ export function Toolbar({
             <div style={styles.separator} />
             <button style={styles.btnSmall} onClick={onExportJSON} title="JSON としてエクスポート">
               JSON
-            </button>
-            <button style={styles.btnSmall} onClick={onExportCSV} title="CSV としてエクスポート">
-              CSV
             </button>
           </>
         )}
