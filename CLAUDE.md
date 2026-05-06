@@ -125,4 +125,4 @@ AG Grid のイベントは複数が連鎖して発火するため、1つのイ�
 
 ## 開発ブランチ
 
-変更は `feature/gitignore-skill-fixes` ブランチで行い、コミット後 `git push -u origin feature/gitignore-skill-fixes` でプッシュ。
+PR のマージ先は基本 `develop` ブランチ。`main` へのマージは別途リリース時のみ。
