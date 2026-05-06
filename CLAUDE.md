@@ -49,6 +49,13 @@ gh pr list --repo ta98cb250f/sheetcraft
 gh label list --repo ta98cb250f/sheetcraft
 ```
 
+**注意**: `gh pr edit` は Projects classic の deprecation エラーで失敗する。PR の更新には `gh api` を使うこと。
+
+```bash
+# PR 本文の更新
+gh api repos/ta98cb250f/sheetcraft/pulls/<番号> --method PATCH --field body="..."
+```
+
 ## コアデータモデル
 
 - **`Cell`** = `SimpleCell | RichCell`
