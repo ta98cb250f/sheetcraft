@@ -30,6 +30,8 @@ import type {
 import { isRichCell, resolveFields, computeRecord } from '@sheetcraft/core';
 import { CellDetailPanel } from './CellDetailPanel.js';
 import { SearchPanel } from './SearchPanel.js';
+import { FieldEditModal } from './FieldEditModal.js';
+import { AddColumnModal } from './AddColumnModal.js';
 
 type Props = {
   table: TableFile;
@@ -40,6 +42,8 @@ type Props = {
   onSave: (table: TableFile) => void;
   onAddRow: () => void;
   onDeleteRow: (recordIndex: number) => void;
+  addColumnOpen?: boolean;
+  onAddColumnOpenChange?: (open: boolean) => void;
 };
 
 function getCellDisplayValue(cell: Cell | Cell[] | undefined): unknown {
@@ -104,6 +108,7 @@ type SearchState = { show: boolean; mode: 'search' | 'replace' };
 
 export function TableView({
   table, enums, cellColors, baseFields, validation, onSave, onAddRow, onDeleteRow,
+  addColumnOpen, onAddColumnOpenChange,
 }: Props) {
   const gridRef = useRef<AgGridReact>(null);
   const tableRecordsRef = useRef(table.records);
@@ -114,6 +119,12 @@ export function TableView({
   const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIdx: number | null; fieldName: string | null } | null>(null);
   const [filterActive, setFilterActive] = useState(false);
+  const [fieldEditTarget, setFieldEditTarget] = useState<string | null>(null);
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+
+  useEffect(() => {
+    if (addColumnOpen) setShowAddColumnModal(true);
+  }, [addColumnOpen]);
 
   const fields = useMemo(() => {
     return baseFields ? resolveFields(table.fields, baseFields) : table.fields;
@@ -508,14 +519,39 @@ export function TableView({
             },
           }]
         : []),
+      ...(fieldName && table.fields.some((f) => f.name === fieldName)
+        ? [
+            { type: 'separator' as const },
+            {
+              type: 'item' as const,
+              label: 'この列の設定を編集',
+              action: () => setFieldEditTarget(fieldName),
+            },
+            {
+              type: 'item' as const,
+              label: 'この列を削除',
+              action: () => {
+                if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？\nこの操作は元に戻せません。`)) return;
+                const newFields = table.fields.filter((f) => f.name !== fieldName);
+                const newRecords = table.records.map((r) => {
+                  const next = { ...r };
+                  delete next[fieldName];
+                  return next;
+                });
+                onSave({ ...table, fields: newFields, records: newRecords });
+              },
+            },
+          ]
+        : []),
       { type: 'separator' as const },
       { type: 'item', label: '行を追加', action: onAddRow },
+      { type: 'item' as const, label: '列を追加', action: () => setShowAddColumnModal(true) },
       ...(rowIdx !== null
         ? [{ type: 'item' as const, label: '行を削除', action: () => { onDeleteRow(rowIdx); setSelectedRow(null); setSelectedField(null); } }]
         : []),
     ];
     return items;
-  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table.records, updateCellRich]);
+  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table, onSave, updateCellRich]);
 
   // Row drag: sync new order back to records (preserve filtered-out rows at end)
   const onRowDragEnd = useCallback((_e: RowDragEndEvent) => {
@@ -634,6 +670,32 @@ export function TableView({
           />
         )}
       </div>
+      {fieldEditTarget && (() => {
+        const targetField = table.fields.find((f) => f.name === fieldEditTarget);
+        if (!targetField) return null;
+        return (
+          <FieldEditModal
+            field={targetField}
+            onSave={(updated) => {
+              const newFields = table.fields.map((f) => f.name === updated.name ? updated : f);
+              onSave({ ...table, fields: newFields });
+            }}
+            onClose={() => setFieldEditTarget(null)}
+          />
+        );
+      })()}
+      {showAddColumnModal && (
+        <AddColumnModal
+          existingNames={new Set(fields.map((f) => f.name))}
+          onAdd={(newField) => {
+            onSave({ ...table, fields: [...table.fields, newField] });
+          }}
+          onClose={() => {
+            setShowAddColumnModal(false);
+            onAddColumnOpenChange?.(false);
+          }}
+        />
+      )}
       <CellDetailPanel
         fieldName={selectedField}
         cell={selectedCell}

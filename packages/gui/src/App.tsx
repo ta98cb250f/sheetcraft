@@ -21,6 +21,7 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [pendingTable, setPendingTable] = useState<TableFile | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [addColumnOpen, setAddColumnOpen] = useState(false);
 
   // Undo/Redo history (per selected table)
   const historyRef = useRef<TableFile[]>([]);
@@ -166,6 +167,7 @@ export function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onExportJSON={handleExportJSON}
+        onAddColumn={() => setAddColumnOpen(true)}
       />
       <div style={styles.body}>
         {state.tableNames.length > 0 && (
@@ -204,6 +206,8 @@ export function App() {
               onSave={handleTableChange}
               onAddRow={handleAddRow}
               onDeleteRow={handleDeleteRow}
+              addColumnOpen={addColumnOpen}
+              onAddColumnOpenChange={setAddColumnOpen}
             />
           )}
         </main>
