@@ -33,15 +33,20 @@ npm run dev -w packages/gui
 `gh` コマンド（v2.45.0）が `/usr/bin/gh` に存在し、`GH_TOKEN` 環境変数で認証済み（アカウント: `ta98cb250f`）。
 GitHub の操作（Issue・PR・マイルストーン確認など）は `gh` コマンドで行える。
 
+**注意**: git remote がローカルプロキシ経由のため、リポジトリ操作には必ず `--repo` フラグを付けること。
+
 ```bash
 # マイルストーン一覧
 gh api repos/ta98cb250f/sheetcraft/milestones
 
 # Issue 一覧
-gh issue list
+gh issue list --repo ta98cb250f/sheetcraft
 
 # PR 一覧
-gh pr list
+gh pr list --repo ta98cb250f/sheetcraft
+
+# ラベル一覧
+gh label list --repo ta98cb250f/sheetcraft
 ```
 
 ## コアデータモデル
