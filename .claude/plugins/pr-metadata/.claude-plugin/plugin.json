@@ -1,8 +1,0 @@
-{
-  "name": "pr-metadata",
-  "version": "1.0.0",
-  "description": "Automatically sets labels, milestones, and assignees when creating GitHub PRs",
-  "author": {
-    "name": "yoshino takuya"
-  }
-}
