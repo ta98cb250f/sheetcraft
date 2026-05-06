@@ -28,6 +28,22 @@ npm test -w packages/core
 npm run dev -w packages/gui
 ```
 
+## GitHub CLI（gh）
+
+`gh` コマンド（v2.45.0）が `/usr/bin/gh` に存在し、`GH_TOKEN` 環境変数で認証済み（アカウント: `ta98cb250f`）。
+GitHub の操作（Issue・PR・マイルストーン確認など）は `gh` コマンドで行える。
+
+```bash
+# マイルストーン一覧
+gh api repos/ta98cb250f/sheetcraft/milestones
+
+# Issue 一覧
+gh issue list
+
+# PR 一覧
+gh pr list
+```
+
 ## コアデータモデル
 
 - **`Cell`** = `SimpleCell | RichCell`
