@@ -1,4 +1,4 @@
-import type { TableFile, FieldDef, Record, Cell } from './types.js';
+import type { TableFile, FieldDef, Record as MasterRecord, Cell } from './types.js';
 import { isRichCell } from './types.js';
 import { computeRecord } from './formula.js';
 import { resolveFields } from './schema.js';
@@ -12,7 +12,7 @@ function resolveCellValue(cell: Cell | Cell[] | undefined): unknown {
 }
 
 function buildExportRecord(
-  record: Record,
+  record: MasterRecord,
   fields: FieldDef[],
   refTables?: Map<string, TableFile>
 ): { [k: string]: unknown } {
