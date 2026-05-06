@@ -125,4 +125,4 @@ AG Grid のイベントは複数が連鎖して発火するため、1つのイ�
 
 ## 開発ブランチ
 
-PR のマージ先は基本 `develop` ブランチ。`main` へのマージは別途リリース時のみ。
+PR を作成する前に `gh api repos/ta98cb250f/sheetcraft --jq '.default_branch'` でデフォルトブランチを確認し、マージ先に使うこと。
