@@ -65,7 +65,23 @@ function toRichCell(cell: Cell | undefined, patch: Partial<RichCell>): RichCell 
 }
 
 function isFieldEditable(field: FieldDef): boolean {
-  return field.type !== 'computed' && field.editable !== false && !field.auto;
+  // increment auto fields (id) are locked; timestamp_version fields are now manually editable
+  return field.type !== 'computed' && field.editable !== false && field.auto !== 'increment';
+}
+
+function versionComparator(a: unknown, b: unknown): number {
+  const parse = (v: unknown) =>
+    String(v ?? '').split('.').map((n) => parseInt(n, 10) || 0);
+  const av = parse(a), bv = parse(b);
+  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isVersionField(field: FieldDef): boolean {
+  return field.auto === 'timestamp_version' || field.name === 'version';
 }
 
 function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
@@ -178,16 +194,28 @@ export function TableView({
         const rowIdx = (params.data as { _idx: number })._idx;
         const raw = tableRecordsRef.current[rowIdx]?.[f.name];
         const hasComment = isRichCell(raw as Cell) && !!(raw as RichCell).comment;
+        const hasFormula = f.type !== 'computed' && isRichCell(raw as Cell) && !!(raw as RichCell).override;
         const val = String(params.value ?? '');
-        if (!hasComment) return val;
+        if (!hasComment && !hasFormula) return val;
         return (
           <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            <div style={{
-              position: 'absolute', top: 0, right: 0,
-              width: 0, height: 0, borderStyle: 'solid',
-              borderWidth: '0 7px 7px 0',
-              borderColor: 'transparent #f57c00 transparent transparent',
-            }} title={(raw as RichCell).comment ?? ''} />
+            {hasComment && (
+              <div style={{
+                position: 'absolute', top: 0, right: 0,
+                width: 0, height: 0, borderStyle: 'solid',
+                borderWidth: '0 7px 7px 0',
+                borderColor: 'transparent #f57c00 transparent transparent',
+              }} title={(raw as RichCell).comment ?? ''} />
+            )}
+            {hasFormula && (
+              <div style={{
+                position: 'absolute', bottom: 1, right: 2,
+                fontSize: 9, color: '#1a73e8', fontWeight: 700, lineHeight: 1,
+                pointerEvents: 'none', userSelect: 'none',
+              }} title={`式: =${(raw as RichCell).override}`}>
+                fx
+              </div>
+            )}
             {val}
           </div>
         );
@@ -215,6 +243,7 @@ export function TableView({
           if (f.type === 'computed') return { color: '#999', fontStyle: 'italic', border: '', background: '' };
           return { border: '', background: '', color: 'inherit', fontStyle: 'normal' };
         },
+        ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
     });
   }, [fields, enums, pinnedColumns]);
@@ -226,12 +255,35 @@ export function TableView({
     const field = fields.find((f) => f.name === fieldName);
     if (!field) return;
 
-    const parsed = parseValue(e.newValue, field);
+    const raw = e.newValue;
+    const strVal = typeof raw === 'string' ? raw : '';
+
     const newRecords = table.records.map((r, i) => {
       if (i !== rowIdx) return r;
-      const existing = r[fieldName];
-      if (isRichCell(existing as Cell)) {
-        return { ...r, [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
+      const existing = r[fieldName] as Cell | undefined;
+
+      const existingRich = existing !== undefined && isRichCell(existing as Cell);
+
+      // '= → literal = (escape)
+      if (typeof raw === 'string' && strVal.startsWith("'=")) {
+        const literalVal = parseValue(strVal.slice(1), field);
+        return existingRich
+          ? { ...r, [fieldName]: { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined } }
+          : { ...r, [fieldName]: literalVal };
+      }
+
+      // = prefix → store as formula override (clear value)
+      if (typeof raw === 'string' && strVal.startsWith('=') && strVal.length > 1) {
+        const formula = strVal.slice(1);
+        return existingRich
+          ? { ...r, [fieldName]: { ...(existing as RichCell), override: formula, value: undefined } }
+          : { ...r, [fieldName]: { override: formula } };
+      }
+
+      // Normal value: clear any formula override
+      const parsed = parseValue(raw, field);
+      if (existing !== undefined && isRichCell(existing as Cell)) {
+        return { ...r, [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined } };
       }
       return { ...r, [fieldName]: parsed };
     });
@@ -331,12 +383,23 @@ export function TableView({
       values.forEach((val, colOffset) => {
         const field = fields[startColIdx + colOffset];
         if (!field || !isFieldEditable(field)) return;
-        const parsed = parseValue(val, field);
-        const existing = record[field.name];
-        if (isRichCell(existing as Cell)) {
-          record[field.name] = { ...(existing as RichCell), value: parsed as SimpleCell };
+        const existing = record[field.name] as Cell | undefined;
+        const existingRich = existing !== undefined && isRichCell(existing as Cell);
+        if (val.startsWith("'=")) {
+          const literalVal = parseValue(val.slice(1), field);
+          record[field.name] = existingRich
+            ? { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined }
+            : literalVal;
+        } else if (val.startsWith('=') && val.length > 1) {
+          const formula = val.slice(1);
+          record[field.name] = existingRich
+            ? { ...(existing as RichCell), override: formula, value: undefined }
+            : { override: formula };
         } else {
-          record[field.name] = parsed;
+          const parsed = parseValue(val, field);
+          record[field.name] = existingRich
+            ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
+            : parsed;
         }
       });
       newRecords[recordIdx] = record;

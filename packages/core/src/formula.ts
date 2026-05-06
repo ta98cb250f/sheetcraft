@@ -403,8 +403,28 @@ export function computeRecord(
 ): Record {
   const result: Record = { ...record };
   for (const field of fields) {
-    if (field.type !== 'computed') continue;
     const cell = record[field.name];
+
+    // Non-computed fields: evaluate formula override if present (= prefix feature)
+    if (field.type !== 'computed') {
+      if (isRichCell(cell as Cell)) {
+        const rich = cell as import('./types.js').RichCell;
+        if (rich.override) {
+          try {
+            result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
+          } catch (e) {
+            if (e instanceof FormulaError) {
+              if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
+            } else {
+              console.warn(`Unexpected error evaluating override for "${field.name}":`, e);
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    // Computed fields: value override > formula override > default formula
     if (isRichCell(cell as Cell)) {
       const rich = cell as import('./types.js').RichCell;
       if (rich.value !== undefined) { result[field.name] = rich.value; continue; }

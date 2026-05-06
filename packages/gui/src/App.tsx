@@ -118,9 +118,13 @@ export function App() {
       const v = getNumericCellValue(r['id'] as Cell | undefined);
       return v > m ? v : m;
     }, 0);
-    const newRecord = { id: maxId + 1, version: 1 };
-    handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord] });
-  }, [currentTable, handleTableChange]);
+    // Determine default version value based on field type (string → "1.0.0", int → 1)
+    const baseFields = state.baseFields?.base_fields ?? [];
+    const versionField = [...baseFields, ...currentTable.fields].find((f) => f.name === 'version');
+    const defaultVersion = versionField?.type === 'string' ? '1.0.0' : 1;
+    const newRecord: Record<string, unknown> = { id: maxId + 1, version: defaultVersion };
+    handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord as import('@sheetcraft/core').Record] });
+  }, [currentTable, handleTableChange, state.baseFields]);
 
   const downloadFile = useCallback((content: string, filename: string, mime: string) => {
     const blob = new Blob([content], { type: mime });

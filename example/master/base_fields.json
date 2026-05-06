@@ -11,10 +11,8 @@
     },
     {
       "name": "version",
-      "type": "int",
+      "type": "string",
       "display_name": "バージョン",
-      "editable": false,
-      "auto": "timestamp_version",
       "export": true
     }
   ]
