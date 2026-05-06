@@ -203,10 +203,10 @@ Excel ライクに、セルの値が `=` で始まる場合は式として評価
 
 ---
 
-## 10. GitHub Pages / デプロイ対応
+## 10. ~~GitHub Pages / デプロイ対応~~ ✅ 対応済み
 
-- `vite.config.ts` に `base` パス設定なし（サブディレクトリでの動作が壊れる）
-- GitHub Actions デプロイワークフロー未整備
+- `vite.config.ts` に `base` パス設定追加（`GITHUB_ACTIONS` 環境変数で `/sheetcraft/` を適用）
+- GitHub Actions デプロイワークフロー整備（`.github/workflows/deploy.yml`、`develop` ブランチ push で自動デプロイ）
 
 ---
 
@@ -237,7 +237,7 @@ Excel ライクに、セルの値が `=` で始まる場合は式として評価
 3. ~~数式エラーのバリデーション統合（5-3）~~ ✅
 4. ~~循環参照検出（5-4）~~ ✅
 5. ~~MessagePack エクスポーター（8）~~ ✅（msgpack 対応済み、protobuf は未対応）
-6. GitHub Pages デプロイ（10） ⚠️ **未対応**
+6. ~~GitHub Pages デプロイ（10）~~ ✅
 7. 列設定の編集 GUI（9） ⚠️ **未対応**
 8. Autofill（1-5） ⚠️ **未対応**
 9. セルの範囲選択（1-6） ⚠️ **未対応**
