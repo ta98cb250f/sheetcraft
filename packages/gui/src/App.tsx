@@ -4,7 +4,7 @@ import { Toolbar } from './components/Toolbar.js';
 import { TableList } from './components/TableList.js';
 import { TableView } from './components/TableView.js';
 import { validateTable as validateTableFn, isRichCell, exportToJSON } from '@sheetcraft/core';
-import type { TableFile, ValidationResult, Cell } from '@sheetcraft/core';
+import type { TableFile, ValidationResult, Cell, Record as MasterRecord } from '@sheetcraft/core';
 
 const MAX_HISTORY = 50;
 
@@ -122,8 +122,8 @@ export function App() {
     const baseFields = state.baseFields?.base_fields ?? [];
     const versionField = [...baseFields, ...currentTable.fields].find((f) => f.name === 'version');
     const defaultVersion = versionField?.type === 'string' ? '1.0.0' : 1;
-    const newRecord: Record<string, unknown> = { id: maxId + 1, version: defaultVersion };
-    handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord as import('@sheetcraft/core').Record] });
+    const newRecord: MasterRecord = { id: maxId + 1, version: defaultVersion };
+    handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord] });
   }, [currentTable, handleTableChange, state.baseFields]);
 
   const downloadFile = useCallback((content: string, filename: string, mime: string) => {

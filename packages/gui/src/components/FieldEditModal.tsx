@@ -66,7 +66,11 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
 
   return (
     <div style={styles.overlay} onMouseDown={onClose}>
-      <div style={styles.modal} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        style={styles.modal}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+      >
         <div style={styles.header}>
           <span style={styles.title}>列の設定: {field.name}</span>
           <span style={styles.typeTag}>{field.type}</span>

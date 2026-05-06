@@ -120,6 +120,30 @@ function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
   return raw as Cell;
 }
 
+function applyFormulaInput(
+  val: string,
+  field: FieldDef,
+  existing: Cell | undefined
+): Cell | Cell[] | RichCell {
+  const existingRich = existing !== undefined && isRichCell(existing as Cell);
+  if (val.startsWith("'=")) {
+    const literalVal = parseValue(val.slice(1), field);
+    return existingRich
+      ? { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined }
+      : literalVal as Cell | Cell[];
+  }
+  if (val.startsWith('=') && val.length > 1) {
+    const formula = val.slice(1);
+    return existingRich
+      ? { ...(existing as RichCell), override: formula, value: undefined }
+      : { override: formula };
+  }
+  const parsed = parseValue(val, field);
+  return existingRich
+    ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
+    : parsed as Cell | Cell[];
+}
+
 type SearchState = { show: boolean; mode: 'search' | 'replace' };
 
 export function TableView({
@@ -255,37 +279,11 @@ export function TableView({
     const field = fields.find((f) => f.name === fieldName);
     if (!field) return;
 
-    const raw = e.newValue;
-    const strVal = typeof raw === 'string' ? raw : '';
-
+    const strVal = typeof e.newValue === 'string' ? e.newValue : String(e.newValue ?? '');
     const newRecords = table.records.map((r, i) => {
       if (i !== rowIdx) return r;
       const existing = r[fieldName] as Cell | undefined;
-
-      const existingRich = existing !== undefined && isRichCell(existing as Cell);
-
-      // '= → literal = (escape)
-      if (typeof raw === 'string' && strVal.startsWith("'=")) {
-        const literalVal = parseValue(strVal.slice(1), field);
-        return existingRich
-          ? { ...r, [fieldName]: { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined } }
-          : { ...r, [fieldName]: literalVal };
-      }
-
-      // = prefix → store as formula override (clear value)
-      if (typeof raw === 'string' && strVal.startsWith('=') && strVal.length > 1) {
-        const formula = strVal.slice(1);
-        return existingRich
-          ? { ...r, [fieldName]: { ...(existing as RichCell), override: formula, value: undefined } }
-          : { ...r, [fieldName]: { override: formula } };
-      }
-
-      // Normal value: clear any formula override
-      const parsed = parseValue(raw, field);
-      if (existing !== undefined && isRichCell(existing as Cell)) {
-        return { ...r, [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined } };
-      }
-      return { ...r, [fieldName]: parsed };
+      return { ...r, [fieldName]: applyFormulaInput(strVal, field, existing) };
     });
     onSave({ ...table, records: newRecords });
   }, [fields, table, onSave]);
@@ -384,23 +382,7 @@ export function TableView({
         const field = fields[startColIdx + colOffset];
         if (!field || !isFieldEditable(field)) return;
         const existing = record[field.name] as Cell | undefined;
-        const existingRich = existing !== undefined && isRichCell(existing as Cell);
-        if (val.startsWith("'=")) {
-          const literalVal = parseValue(val.slice(1), field);
-          record[field.name] = existingRich
-            ? { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined }
-            : literalVal;
-        } else if (val.startsWith('=') && val.length > 1) {
-          const formula = val.slice(1);
-          record[field.name] = existingRich
-            ? { ...(existing as RichCell), override: formula, value: undefined }
-            : { override: formula };
-        } else {
-          const parsed = parseValue(val, field);
-          record[field.name] = existingRich
-            ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
-            : parsed;
-        }
+        record[field.name] = applyFormulaInput(val, field, existing);
       });
       newRecords[recordIdx] = record;
     });
@@ -594,7 +576,7 @@ export function TableView({
               type: 'item' as const,
               label: 'この列を削除',
               action: () => {
-                if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？\nこの操作は元に戻せません。`)) return;
+                if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？`)) return;
                 const newFields = table.fields.filter((f) => f.name !== fieldName);
                 const newRecords = table.records.map((r) => {
                   const next = { ...r };
@@ -610,7 +592,16 @@ export function TableView({
       { type: 'item', label: '行を追加', action: onAddRow },
       { type: 'item' as const, label: '列を追加', action: () => setShowAddColumnModal(true) },
       ...(rowIdx !== null
-        ? [{ type: 'item' as const, label: '行を削除', action: () => { onDeleteRow(rowIdx); setSelectedRow(null); setSelectedField(null); } }]
+        ? [{
+            type: 'item' as const,
+            label: '行を削除',
+            action: () => {
+              if (!window.confirm('この行を削除しますか？')) return;
+              onDeleteRow(rowIdx);
+              setSelectedRow(null);
+              setSelectedField(null);
+            },
+          }]
         : []),
     ];
     return items;
