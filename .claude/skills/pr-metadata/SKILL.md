@@ -8,6 +8,10 @@ version: 1.0.0
 
 Every PR created via `gh pr create` must have labels, milestones, and assignees correctly set. This skill defines how to gather that information and apply it.
 
+## 原則
+
+**ラベル・マイルストーン・アサイニーはすべて必須。いずれか1つでも設定できない場合は PR を作成しない。自動判定できないものはユーザーに相談し、合意を得てから作成すること。**
+
 ## Step-by-step process
 
 ### 1. Gather repo metadata (run all three in parallel)
@@ -47,11 +51,11 @@ Use the following signals to select labels from what actually exists in the repo
 | Commit messages contain "feat" | `enhancement`, `feature` |
 | Only docs/config changed | `documentation` |
 
-Only select labels that exist in the repo. If no label matches, omit `--label`.
+Only select labels that exist in the repo. **ラベルが1つも特定できない場合は PR を作成せず、ユーザーに候補を提示して選択を求めること。**
 
 ### 4. Determine milestone
 
-If there are open milestones, pick the one most relevant to the branch or PR content. If only one exists, use it. If none exist, omit `--milestone`.
+If there are open milestones, pick the one most relevant to the branch or PR content. If only one exists, use it. **オープンなマイルストーンが存在しない場合、または適切なものが判断できない場合は、PR を作成せずにユーザーへ確認すること（新規作成するか、マイルストーンなしで進めるかを明示的に合意を得る）。**
 
 ### 5. Build and run the `gh pr create` command
 
@@ -67,10 +71,22 @@ gh pr create \
   [--milestone "<milestone-title>"]
 ```
 
-- Always include `--assignee`
-- Include `--label` only if matching labels were found
-- Include `--milestone` only if a relevant open milestone exists
+- **`--assignee` は必須**。取得できない場合はユーザーに確認する
+- **`--label` は必須**。自動判定できない場合は PR を作成せずユーザーに確認する
+- **`--milestone` は必須**。存在しない・判断できない場合はユーザーに確認し、明示的に「なしで進める」合意を得た場合のみ省略可
 - Multiple labels require multiple `--label` flags (not comma-separated)
+
+## `gh` が使えない環境でのフォールバック
+
+`gh` コマンドが存在しない場合は MCP ツールで代替する：
+
+| 目的 | MCP ツール |
+|------|-----------|
+| ラベル一覧取得 | `mcp__github__get_label`（候補名を個別に確認）|
+| マイルストーン取得 | GitHub API 経由（MCP に専用ツールがなければユーザーに確認）|
+| ユーザー取得 | `mcp__github__get_me` |
+| PR 作成 | `mcp__github__create_pull_request` |
+| ラベル・アサイニー設定 | `mcp__github__issue_write`（PR 番号を issue_number に指定）|
 
 ## Example
 
