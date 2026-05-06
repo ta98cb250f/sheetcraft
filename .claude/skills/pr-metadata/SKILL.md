@@ -14,18 +14,14 @@ Every PR created via `gh pr create` must have labels, milestones, and assignees 
 
 ## Step-by-step process
 
-### 1. Gather repo metadata (run all three in parallel)
+### 1. Gather repo metadata (run all in parallel)
+
+**注意**: git remote がローカルプロキシ経由の場合、`gh` サブコマンドには `--repo {owner}/{repo}` が必須。`gh api` は URL 直指定のため不要。
 
 ```bash
-gh label list --limit 50 --json name,color,description
+gh label list --repo {owner}/{repo} --limit 50 --json name,color,description
 gh api repos/{owner}/{repo}/milestones --jq '[.[] | select(.state=="open") | {title: .title, number: .number}]'
-gh api repos/{owner}/{repo} --jq '.owner.login'
-```
-
-Also get the current git user:
-```bash
-git config user.name
-git config user.email
+gh api repos/{owner}/{repo} --jq '{owner: .owner.login, default_branch: .default_branch}'
 gh api user --jq '.login' 2>/dev/null
 ```
 
@@ -57,15 +53,20 @@ Only select labels that exist in the repo. **ラベルが1つも特定できな�
 
 If there are open milestones, pick the one most relevant to the branch or PR content. If only one exists, use it. **オープンなマイルストーンが存在しない場合、または適切なものが判断できない場合は、PR を作成せずにユーザーへ確認すること（新規作成するか、マイルストーンなしで進めるかを明示的に合意を得る）。**
 
-### 5. Build and run the `gh pr create` command
+### 5. Determine base branch
 
-Assemble flags based on what was found:
+Step 1 で取得した `default_branch` をマージ先に使う。特別な指示がない限りハードコードしない。
+
+### 6. Build and run the `gh pr create` command
+
+`gh pr create` も `--repo` フラグが必要。ただし git remote がプロキシ経由の場合は失敗することがあるため、失敗時は MCP の `mcp__github__create_pull_request` にフォールバックする。
 
 ```bash
 gh pr create \
+  --repo {owner}/{repo} \
   --title "<title>" \
   --body "<body>" \
-  --base <base-branch> \
+  --base <default_branch> \
   --assignee <github-login> \
   [--label "<label1>" --label "<label2>"] \
   [--milestone "<milestone-title>"]
@@ -75,6 +76,7 @@ gh pr create \
 - **`--label` は必須**。自動判定できない場合は PR を作成せずユーザーに確認する
 - **`--milestone` は必須**。存在しない・判断できない場合はユーザーに確認し、明示的に「なしで進める」合意を得た場合のみ省略可
 - Multiple labels require multiple `--label` flags (not comma-separated)
+- **PR 作成後の更新**: `gh pr edit` は Projects classic の deprecation エラーで失敗する。PR 本文等の更新には `gh api repos/{owner}/{repo}/pulls/<番号> --method PATCH` を使うこと
 
 ## `gh` が使えない環境でのフォールバック
 
@@ -95,8 +97,10 @@ gh pr create \
 # Milestones available: Phase 1
 # Branch: feature/inline-editing
 # Changed files: packages/gui/src/...
+# Default branch: develop  ← gh api repos/ta98cb250f/sheetcraft --jq '.default_branch' で確認
 
 gh pr create \
+  --repo ta98cb250f/sheetcraft \
   --title "Add inline cell editing to TableView" \
   --body "..." \
   --base develop \

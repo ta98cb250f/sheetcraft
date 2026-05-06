@@ -28,6 +28,34 @@ npm test -w packages/core
 npm run dev -w packages/gui
 ```
 
+## GitHub CLI（gh）
+
+`gh` コマンド（v2.45.0）が `/usr/bin/gh` に存在し、`GH_TOKEN` 環境変数で認証済み（アカウント: `ta98cb250f`）。
+GitHub の操作（Issue・PR・マイルストーン確認など）は `gh` コマンドで行える。
+
+**注意**: git remote がローカルプロキシ経由のため、リポジトリ操作には必ず `--repo` フラグを付けること。
+
+```bash
+# マイルストーン一覧
+gh api repos/ta98cb250f/sheetcraft/milestones
+
+# Issue 一覧
+gh issue list --repo ta98cb250f/sheetcraft
+
+# PR 一覧
+gh pr list --repo ta98cb250f/sheetcraft
+
+# ラベル一覧
+gh label list --repo ta98cb250f/sheetcraft
+```
+
+**注意**: `gh pr edit` は Projects classic の deprecation エラーで失敗する。PR の更新には `gh api` を使うこと。
+
+```bash
+# PR 本文の更新
+gh api repos/ta98cb250f/sheetcraft/pulls/<番号> --method PATCH --field body="..."
+```
+
 ## コアデータモデル
 
 - **`Cell`** = `SimpleCell | RichCell`
@@ -97,4 +125,4 @@ AG Grid のイベントは複数が連鎖して発火するため、1つのイ�
 
 ## 開発ブランチ
 
-変更は `feature/gitignore-skill-fixes` ブランチで行い、コミット後 `git push -u origin feature/gitignore-skill-fixes` でプッシュ。
+PR を作成する前に `gh api repos/ta98cb250f/sheetcraft --jq '.default_branch'` でデフォルトブランチを確認し、マージ先に使うこと。
