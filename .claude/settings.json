@@ -1,13 +1,1 @@
-{
-  "extraKnownMarketplaces": {
-    "local": {
-      "source": {
-        "source": "directory",
-        "path": ".claude/plugins"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "pr-metadata@local": true
-  }
-}
+{}
