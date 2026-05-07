@@ -454,7 +454,8 @@ export function TableView({
         headerName: f.display_name ?? f.name,
         editable: isEditable,
         suppressMovable: !isTableField,
-        ...(typeof savedWidth === 'number' ? { width: savedWidth } : { flex: 1 }),
+        // 保存幅 > デフォルト 150px（合計が画面幅を超えたら横スクロール）
+        width: typeof savedWidth === 'number' ? savedWidth : 150,
         minWidth: 60,
         cellEditorSelector,
         cellRenderer: CommentCellRenderer,

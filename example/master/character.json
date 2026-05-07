@@ -127,5 +127,8 @@
         "comment": "特殊計算：イベント限定仕様"
       }
     }
-  ]
+  ],
+  "column_widths": {
+    "version": 113
+  }
 }
