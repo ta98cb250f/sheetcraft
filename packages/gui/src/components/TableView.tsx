@@ -162,6 +162,11 @@ export function TableView({
   const [fieldEditTarget, setFieldEditTarget] = useState<string | null>(null);
   const [showAddColumnModal, setShowAddColumnModal] = useState(false);
 
+  const fieldEditTargetDef = useMemo(
+    () => fieldEditTarget ? (table.fields.find((f) => f.name === fieldEditTarget) ?? null) : null,
+    [fieldEditTarget, table.fields]
+  );
+
   useEffect(() => {
     if (addColumnOpen) setShowAddColumnModal(true);
   }, [addColumnOpen]);
@@ -279,11 +284,22 @@ export function TableView({
     const field = fields.find((f) => f.name === fieldName);
     if (!field) return;
 
-    const strVal = typeof e.newValue === 'string' ? e.newValue : String(e.newValue ?? '');
     const newRecords = table.records.map((r, i) => {
       if (i !== rowIdx) return r;
       const existing = r[fieldName] as Cell | undefined;
-      return { ...r, [fieldName]: applyFormulaInput(strVal, field, existing) };
+      // = prefix formula input is only meaningful for string input
+      if (typeof e.newValue === 'string') {
+        return { ...r, [fieldName]: applyFormulaInput(e.newValue, field, existing) };
+      }
+      // bool / number from AG Grid native editors: parse directly
+      const parsed = parseValue(e.newValue, field);
+      const existingRich = existing !== undefined && isRichCell(existing as Cell);
+      return {
+        ...r,
+        [fieldName]: existingRich
+          ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
+          : parsed,
+      };
     });
     onSave({ ...table, records: newRecords });
   }, [fields, table, onSave]);
@@ -724,20 +740,16 @@ export function TableView({
           />
         )}
       </div>
-      {fieldEditTarget && (() => {
-        const targetField = table.fields.find((f) => f.name === fieldEditTarget);
-        if (!targetField) return null;
-        return (
-          <FieldEditModal
-            field={targetField}
-            onSave={(updated) => {
-              const newFields = table.fields.map((f) => f.name === updated.name ? updated : f);
-              onSave({ ...table, fields: newFields });
-            }}
-            onClose={() => setFieldEditTarget(null)}
-          />
-        );
-      })()}
+      {fieldEditTargetDef && (
+        <FieldEditModal
+          field={fieldEditTargetDef}
+          onSave={(updated) => {
+            const newFields = table.fields.map((f) => f.name === updated.name ? updated : f);
+            onSave({ ...table, fields: newFields });
+          }}
+          onClose={() => setFieldEditTarget(null)}
+        />
+      )}
       {showAddColumnModal && (
         <AddColumnModal
           existingNames={new Set(fields.map((f) => f.name))}

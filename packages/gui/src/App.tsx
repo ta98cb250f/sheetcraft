@@ -106,6 +106,7 @@ export function App() {
     setPendingTable(null);
     setDirty(false);
     setValidation(null);
+    setAddColumnOpen(false);
     historyRef.current = [];
     futureRef.current = [];
     selectTable(name);
