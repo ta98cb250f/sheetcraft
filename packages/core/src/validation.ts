@@ -154,7 +154,7 @@ export function validateTable(
       table: table.table,
       recordIndex: -1,
       field: fieldName,
-      message: `computed フィールド "${fieldName}" に循環参照があります`,
+      message: `フィールド "${fieldName}" の式に循環参照があります`,
     });
   }
 

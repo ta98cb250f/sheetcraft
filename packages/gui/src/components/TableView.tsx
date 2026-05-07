@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -10,7 +10,10 @@ import type {
   CellContextMenuEvent,
   CellFocusedEvent,
   Column,
+  ColumnMovedEvent,
+  ColumnResizedEvent,
   ICellRendererParams,
+  IHeaderParams,
   RowDragEndEvent,
 } from 'ag-grid-community';
 import { ContextMenu } from './ContextMenu.js';
@@ -30,6 +33,8 @@ import type {
 import { isRichCell, resolveFields, computeRecord } from '@sheetcraft/core';
 import { CellDetailPanel } from './CellDetailPanel.js';
 import { SearchPanel } from './SearchPanel.js';
+import { FieldEditModal } from './FieldEditModal.js';
+import { AddColumnModal } from './AddColumnModal.js';
 
 type Props = {
   table: TableFile;
@@ -40,6 +45,8 @@ type Props = {
   onSave: (table: TableFile) => void;
   onAddRow: () => void;
   onDeleteRow: (recordIndex: number) => void;
+  addColumnOpen?: boolean;
+  onAddColumnOpenChange?: (open: boolean) => void;
 };
 
 function getCellDisplayValue(cell: Cell | Cell[] | undefined): unknown {
@@ -61,10 +68,195 @@ function toRichCell(cell: Cell | undefined, patch: Partial<RichCell>): RichCell 
 }
 
 function isFieldEditable(field: FieldDef): boolean {
-  return field.type !== 'computed' && field.editable !== false && !field.auto;
+  // increment auto fields (id) are locked; timestamp_version fields are now manually editable
+  return field.editable !== false && field.auto !== 'increment';
 }
 
-function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
+function versionComparator(a: unknown, b: unknown): number {
+  const parse = (v: unknown) =>
+    String(v ?? '').split('.').map((n) => parseInt(n, 10) || 0);
+  const av = parse(a), bv = parse(b);
+  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function isVersionField(field: FieldDef): boolean {
+  return field.auto === 'timestamp_version' || field.name === 'version';
+}
+
+// セル編集時、その行の _formulas にこの列の式があれば「=式」を初期値とするテキストエディタ
+type FormulaAwareEditorProps = {
+  value?: unknown;
+  data?: { _formulas?: { [k: string]: string } };
+  colDef?: { field?: string };
+  eventKey?: string | null;
+  charPress?: string | null;
+  stopEditing?: () => void;
+};
+
+const FormulaAwareTextEditor = forwardRef((props: FormulaAwareEditorProps, ref) => {
+  const fieldName = props.colDef?.field;
+  const formula = fieldName ? props.data?._formulas?.[fieldName] : undefined;
+  const initialValue = formula !== undefined
+    ? `=${formula}`
+    // BACKSPACE/DELETE で編集開始時はクリア、文字キー開始時はその文字、それ以外は既存値
+    : props.eventKey === 'Backspace' || props.eventKey === 'Delete'
+      ? ''
+      : props.charPress != null
+        ? props.charPress
+        : String(props.value ?? '');
+  const [val, setVal] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    getValue: () => val,
+    isCancelBeforeStart: () => false,
+    isCancelAfterEnd: () => false,
+  }));
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === 'Tab') props.stopEditing?.();
+      }}
+      style={{ width: '100%', height: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', padding: '0 8px' }}
+    />
+  );
+});
+FormulaAwareTextEditor.displayName = 'FormulaAwareTextEditor';
+
+type ColumnHeaderParams = IHeaderParams & {
+  isTableField: boolean;
+  fieldName: string;
+  onSettings?: () => void;
+  onDelete?: () => void;
+  onAddColumn: () => void;
+  hasHeaderCheckbox: boolean;
+};
+
+function ColumnHeader(params: ColumnHeaderParams) {
+  const { displayName, column, enableSorting, progressSort, api,
+    isTableField, fieldName, onSettings, onDelete, onAddColumn, hasHeaderCheckbox } = params;
+
+  const [sort, setSort] = useState<'asc' | 'desc' | null>(column.getSort() ?? null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [allSelected, setAllSelected] = useState(false);
+  const [someSelected, setSomeSelected] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onSort = () => setSort(column.getSort() ?? null);
+    column.addEventListener('sortChanged', onSort);
+    return () => column.removeEventListener('sortChanged', onSort);
+  }, [column]);
+
+  useEffect(() => {
+    if (!hasHeaderCheckbox) return;
+    const update = () => {
+      let total = 0, sel = 0;
+      api.forEachNodeAfterFilter((n) => { total++; if (n.isSelected()) sel++; });
+      setAllSelected(total > 0 && sel === total);
+      setSomeSelected(sel > 0 && sel < total);
+    };
+    api.addEventListener('selectionChanged', update);
+    api.addEventListener('filterChanged', update);
+    return () => {
+      api.removeEventListener('selectionChanged', update);
+      api.removeEventListener('filterChanged', update);
+    };
+  }, [api, hasHeaderCheckbox]);
+
+  useEffect(() => {
+    if (!menuPos) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuPos(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuPos]);
+
+  const sortIcon = sort === 'asc' ? ' ▲' : sort === 'desc' ? ' ▼' : '';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', gap: 2 }}>
+      {hasHeaderCheckbox && (
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => { if (el) el.indeterminate = someSelected; }}
+          onChange={() => allSelected ? api.deselectAll() : api.selectAllFiltered()}
+          style={{ margin: '0 2px 0 0', flexShrink: 0, cursor: 'pointer' }}
+        />
+      )}
+      <span
+        onClick={(e) => { if (enableSorting) progressSort(e.shiftKey); }}
+        style={{ flex: 1, cursor: enableSorting ? 'pointer' : 'default', overflow: 'hidden', userSelect: 'none' }}
+      >
+        <div style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{displayName}{sortIcon}</div>
+        <div style={{ fontSize: 10, color: '#aaa', fontFamily: 'monospace', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{fieldName}</div>
+      </span>
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (menuPos) { setMenuPos(null); return; }
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenuPos({ top: rect.bottom, left: rect.left });
+          }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 3px', fontSize: 15, color: '#888', lineHeight: 1 }}
+          title="列メニュー"
+        >
+          ⋮
+        </button>
+        {menuPos && (
+          <div
+            ref={menuRef}
+            style={{
+              position: 'fixed', top: menuPos.top, left: menuPos.left,
+              background: '#fff', border: '1px solid #ddd', borderRadius: 4,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 9999, minWidth: 160, fontSize: 13,
+            }}
+          >
+            {isTableField && onSettings && (
+              <div onClick={() => { setMenuPos(null); onSettings(); }} style={colMenuItemStyle}
+                onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                この列の設定を編集
+              </div>
+            )}
+            {isTableField && onDelete && (
+              <div onClick={() => { setMenuPos(null); onDelete(); }} style={{ ...colMenuItemStyle, color: '#c62828' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                この列を削除
+              </div>
+            )}
+            <div onClick={() => { setMenuPos(null); onAddColumn(); }} style={colMenuItemStyle}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+              onMouseLeave={e => (e.currentTarget.style.background = '')}>
+              列を追加
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const colMenuItemStyle: React.CSSProperties = { padding: '6px 12px', cursor: 'pointer' };
+
+function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] | undefined {
   if (field.type === 'bool') {
     if (typeof raw === 'boolean') return raw;
     const s = String(raw).toLowerCase();
@@ -72,13 +264,18 @@ function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
   }
   if (field.type === 'int') {
     if (typeof raw === 'number') return Math.round(raw);
-    const n = parseInt(String(raw), 10);
-    return isNaN(n) ? String(raw) : n;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = parseInt(s, 10);
+    // 入力が数値として解釈できない場合は undefined を返し呼び出し側で破棄させる
+    return isNaN(n) || !/^-?\d+$/.test(s) ? undefined : n;
   }
   if (field.type === 'float') {
     if (typeof raw === 'number') return raw;
-    const n = parseFloat(String(raw));
-    return isNaN(n) ? String(raw) : n;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = parseFloat(s);
+    return isNaN(n) || !/^-?\d*\.?\d+$/.test(s) ? undefined : n;
   }
   if (field.type === 'list<int>') {
     if (Array.isArray(raw)) return raw as Cell[];
@@ -100,20 +297,62 @@ function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
   return raw as Cell;
 }
 
+function applyFormulaInput(
+  val: string,
+  field: FieldDef,
+  existing: Cell | undefined
+): Cell | Cell[] | RichCell | undefined {
+  const existingRich = existing !== undefined && isRichCell(existing as Cell);
+  if (val.startsWith("'=")) {
+    const literalVal = parseValue(val.slice(1), field);
+    if (literalVal === undefined) return existing; // 型に合わない値は破棄
+    return existingRich
+      ? { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined }
+      : literalVal as Cell | Cell[];
+  }
+  if (val.startsWith('=') && val.length > 1) {
+    const formula = val.slice(1);
+    return existingRich
+      ? { ...(existing as RichCell), override: formula, value: undefined }
+      : { override: formula };
+  }
+  const parsed = parseValue(val, field);
+  if (parsed === undefined) return existing; // 型に合わない値は破棄
+  return existingRich
+    ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
+    : parsed as Cell | Cell[];
+}
+
 type SearchState = { show: boolean; mode: 'search' | 'replace' };
 
 export function TableView({
   table, enums, cellColors, baseFields, validation, onSave, onAddRow, onDeleteRow,
+  addColumnOpen, onAddColumnOpenChange,
 }: Props) {
   const gridRef = useRef<AgGridReact>(null);
   const tableRecordsRef = useRef(table.records);
   tableRecordsRef.current = table.records;
+  const tableRef = useRef(table);
+  tableRef.current = table;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [searchState, setSearchState] = useState<SearchState | null>(null);
   const [pinnedColumns, setPinnedColumns] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIdx: number | null; fieldName: string | null } | null>(null);
   const [filterActive, setFilterActive] = useState(false);
+  const [fieldEditTarget, setFieldEditTarget] = useState<string | null>(null);
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+
+  const fieldEditTargetDef = useMemo(
+    () => fieldEditTarget ? (table.fields.find((f) => f.name === fieldEditTarget) ?? null) : null,
+    [fieldEditTarget, table.fields]
+  );
+
+  useEffect(() => {
+    if (addColumnOpen) setShowAddColumnModal(true);
+  }, [addColumnOpen]);
 
   const fields = useMemo(() => {
     return baseFields ? resolveFields(table.fields, baseFields) : table.fields;
@@ -122,7 +361,17 @@ export function TableView({
   const rowData = useMemo(() => {
     return table.records.map((record, idx) => {
       const computed = computeRecord(record, fields);
-      const row: { [k: string]: unknown } & { _idx: number; _errFields: Set<string>; _warnFields: Set<string> } = {
+      const formulas: { [k: string]: string } = {};
+      for (const f of fields) {
+        const raw = record[f.name];
+        if (isRichCell(raw as Cell) && (raw as RichCell).override) {
+          formulas[f.name] = (raw as RichCell).override as string;
+        }
+      }
+      const row: { [k: string]: unknown } & {
+        _idx: number; _errFields: Set<string>; _warnFields: Set<string>;
+        _formulas: { [k: string]: string };
+      } = {
         _idx: idx,
         _errFields: new Set(
           validation?.errors.filter((e) => e.recordIndex === idx).map((e) => e.field) ?? []
@@ -130,6 +379,7 @@ export function TableView({
         _warnFields: new Set(
           validation?.warnings.filter((w) => w.recordIndex === idx).map((w) => w.field) ?? []
         ),
+        _formulas: formulas,
       };
       for (const f of fields) {
         row[f.name] = getCellDisplayValue(computed[f.name] as Cell | undefined);
@@ -143,6 +393,8 @@ export function TableView({
     filter: true,
     resizable: true,
     minWidth: 60,
+    // 自動型変換を無効化（= 式入力や semver 文字列を NaN にしないため）
+    cellDataType: false,
   }), []);
 
   const colDefs = useMemo<ColDef[]>(() => {
@@ -156,10 +408,9 @@ export function TableView({
           cellEditorSelector = () => ({ component: 'agSelectCellEditor', params: { values } });
         } else if (f.type === 'bool') {
           cellEditorSelector = () => ({ component: 'agCheckboxCellEditor' });
-        } else if (f.type === 'int' || f.type === 'float') {
-          cellEditorSelector = () => ({ component: 'agNumberCellEditor' });
         } else {
-          cellEditorSelector = () => ({ component: 'agTextCellEditor' });
+          // int/float/string/list は FormulaAwareTextEditor を使い、既存の = 式を編集可能にする
+          cellEditorSelector = () => ({ component: FormulaAwareTextEditor });
         }
       }
 
@@ -167,46 +418,84 @@ export function TableView({
         const rowIdx = (params.data as { _idx: number })._idx;
         const raw = tableRecordsRef.current[rowIdx]?.[f.name];
         const hasComment = isRichCell(raw as Cell) && !!(raw as RichCell).comment;
+        const hasFormula = isRichCell(raw as Cell) && !!(raw as RichCell).override;
         const val = String(params.value ?? '');
-        if (!hasComment) return val;
+        if (!hasComment && !hasFormula) return val;
         return (
           <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            <div style={{
-              position: 'absolute', top: 0, right: 0,
-              width: 0, height: 0, borderStyle: 'solid',
-              borderWidth: '0 7px 7px 0',
-              borderColor: 'transparent #f57c00 transparent transparent',
-            }} title={(raw as RichCell).comment ?? ''} />
+            {hasComment && (
+              <div style={{
+                position: 'absolute', top: 0, right: 0,
+                width: 0, height: 0, borderStyle: 'solid',
+                borderWidth: '0 7px 7px 0',
+                borderColor: 'transparent #f57c00 transparent transparent',
+              }} title={(raw as RichCell).comment ?? ''} />
+            )}
+            {hasFormula && (
+              <div style={{
+                position: 'absolute', bottom: 1, right: 2,
+                fontSize: 9, color: '#1a73e8', fontWeight: 700, lineHeight: 1,
+                pointerEvents: 'none', userSelect: 'none',
+              }} title={`式: =${(raw as RichCell).override}`}>
+                fx
+              </div>
+            )}
             {val}
           </div>
         );
       };
 
+      const isTableField = table.fields.some((tf) => tf.name === f.name);
+      const fieldName = f.name;
+
+      const savedWidth = table.column_widths?.[f.name];
       return {
         field: f.name,
         headerName: f.display_name ?? f.name,
         editable: isEditable,
-        flex: 1,
+        suppressMovable: !isTableField,
+        // 保存幅 > デフォルト 150px（合計が画面幅を超えたら横スクロール）
+        width: typeof savedWidth === 'number' ? savedWidth : 150,
         minWidth: 60,
         cellEditorSelector,
         cellRenderer: CommentCellRenderer,
         headerClass: f.export === false ? 'col-no-export' : '',
         rowDrag: i === 0,
         checkboxSelection: i === 0,
-        headerCheckboxSelection: i === 0,
-        headerCheckboxSelectionFilteredOnly: i === 0,
         pinned: pinnedColumns.has(f.name) ? ('left' as const) : undefined,
-        cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string> } }) => {
+        headerComponent: ColumnHeader,
+        headerComponentParams: {
+          isTableField,
+          fieldName,
+          hasHeaderCheckbox: i === 0,
+          onSettings: isTableField ? () => setFieldEditTarget(fieldName) : undefined,
+          onDelete: isTableField ? () => {
+            const t = tableRef.current;
+            const field = t.fields.find((f) => f.name === fieldName);
+            if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？`)) return;
+            const newFields = t.fields.filter((f) => f.name !== fieldName);
+            const newRecords = t.records.map((r) => { const next = { ...r }; delete next[fieldName]; return next; });
+            onSaveRef.current({ ...t, fields: newFields, records: newRecords });
+          } : undefined,
+          onAddColumn: () => setShowAddColumnModal(true),
+        },
+        cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string>; _idx: number } }) => {
           const hasError = params.data._errFields?.has(f.name);
           const hasWarn = params.data._warnFields?.has(f.name);
           if (hasError) return { border: '2px solid #e53935', background: '#fff8f8', color: 'inherit', fontStyle: 'normal' };
           if (hasWarn) return { border: '2px solid #fdd835', background: '#fffde7', color: 'inherit', fontStyle: 'normal' };
-          if (f.type === 'computed') return { color: '#999', fontStyle: 'italic', border: '', background: '' };
-          return { border: '', background: '', color: 'inherit', fontStyle: 'normal' };
+          const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
+          const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
+          const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
+          // 編集不可フィールドはグレー斜体
+          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: colorHex || (f.export === false ? '#f0f0f0' : '') };
+          if (f.export === false) return { border: '', background: colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
+          return { border: '', background: colorHex, color: 'inherit', fontStyle: 'normal' };
         },
+        ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
     });
-  }, [fields, enums, pinnedColumns]);
+  }, [fields, enums, pinnedColumns, table.fields, table.column_widths, cellColors, setFieldEditTarget]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -215,14 +504,24 @@ export function TableView({
     const field = fields.find((f) => f.name === fieldName);
     if (!field) return;
 
-    const parsed = parseValue(e.newValue, field);
     const newRecords = table.records.map((r, i) => {
       if (i !== rowIdx) return r;
-      const existing = r[fieldName];
-      if (isRichCell(existing as Cell)) {
-        return { ...r, [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
+      const existing = r[fieldName] as Cell | undefined;
+      // 文字列入力は = 式判定込みで処理（int/float/string/list はすべて agTextCellEditor）
+      if (typeof e.newValue === 'string') {
+        const next = applyFormulaInput(e.newValue, field, existing);
+        return next === existing ? r : { ...r, [fieldName]: next };
       }
-      return { ...r, [fieldName]: parsed };
+      // bool checkbox エディタは boolean を返すため直接 parseValue
+      const parsed = parseValue(e.newValue, field);
+      if (parsed === undefined) return r; // 型に合わない値は破棄
+      const existingRich = existing !== undefined && isRichCell(existing as Cell);
+      return {
+        ...r,
+        [fieldName]: existingRich
+          ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
+          : parsed,
+      };
     });
     onSave({ ...table, records: newRecords });
   }, [fields, table, onSave]);
@@ -257,8 +556,8 @@ export function TableView({
     if (Array.isArray(raw)) return (raw as (string | number)[]).join(', ') as Cell;
     // 未設定の場合
     if (raw === undefined) {
-      // computed フィールドは算出値を表示
-      if (selectedFieldDef?.type === 'computed') {
+      // 列に formula があれば算出値を表示
+      if (selectedFieldDef?.formula) {
         const computed = computeRecord(record, fields);
         const val = computed[selectedField];
         if (val !== undefined && !Array.isArray(val)) return val as Cell;
@@ -278,7 +577,9 @@ export function TableView({
       const strVal = isRichCell(newCell)
         ? String((newCell as RichCell).value ?? '')
         : String(newCell);
-      valueToSave = parseValue(strVal, selectedFieldDef);
+      const parsed = parseValue(strVal, selectedFieldDef);
+      if (parsed === undefined) return; // 型不一致なら更新しない
+      valueToSave = parsed;
     }
 
     const newRecords = table.records.map((r, i) => {
@@ -320,13 +621,10 @@ export function TableView({
       values.forEach((val, colOffset) => {
         const field = fields[startColIdx + colOffset];
         if (!field || !isFieldEditable(field)) return;
-        const parsed = parseValue(val, field);
-        const existing = record[field.name];
-        if (isRichCell(existing as Cell)) {
-          record[field.name] = { ...(existing as RichCell), value: parsed as SimpleCell };
-        } else {
-          record[field.name] = parsed;
-        }
+        const existing = record[field.name] as Cell | undefined;
+        const next = applyFormulaInput(val, field, existing);
+        if (next === undefined) return; // 型不一致のセルはスキップ
+        record[field.name] = next;
       });
       newRecords[recordIdx] = record;
     });
@@ -428,7 +726,7 @@ export function TableView({
     onSave({ ...table, records: newRecords });
   }, [table, onSave]);
 
-  // Right-click context menu
+  // Right-click context menu (cell)
   const onCellContextMenu = useCallback((e: CellContextMenuEvent) => {
     (e.event as MouseEvent)?.preventDefault();
     const rowIdx = e.node ? (e.node.data as { _idx: number })._idx : null;
@@ -436,6 +734,7 @@ export function TableView({
     const mouseEvent = e.event as MouseEvent;
     setContextMenu({ x: mouseEvent.clientX, y: mouseEvent.clientY, rowIdx, fieldName });
   }, []);
+
 
   const buildContextMenuItems = useCallback((): MenuItem[] => {
     if (!contextMenu) return [];
@@ -470,7 +769,7 @@ export function TableView({
             },
           ]
         : []),
-      ...(field?.type === 'computed' && rowIdx !== null && fieldName
+      ...(field && isFieldEditable(field) && rowIdx !== null && fieldName
         ? [{
             type: 'item' as const, label: '式をオーバーライド',
             action: () => {
@@ -508,14 +807,79 @@ export function TableView({
             },
           }]
         : []),
+      ...(fieldName && table.fields.some((f) => f.name === fieldName)
+        ? [
+            { type: 'separator' as const },
+            {
+              type: 'item' as const,
+              label: 'この列の設定を編集',
+              action: () => setFieldEditTarget(fieldName),
+            },
+            {
+              type: 'item' as const,
+              label: 'この列を削除',
+              action: () => {
+                if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？`)) return;
+                const newFields = table.fields.filter((f) => f.name !== fieldName);
+                const newRecords = table.records.map((r) => {
+                  const next = { ...r };
+                  delete next[fieldName];
+                  return next;
+                });
+                onSave({ ...table, fields: newFields, records: newRecords });
+              },
+            },
+          ]
+        : []),
       { type: 'separator' as const },
       { type: 'item', label: '行を追加', action: onAddRow },
+      { type: 'item' as const, label: '列を追加', action: () => setShowAddColumnModal(true) },
       ...(rowIdx !== null
-        ? [{ type: 'item' as const, label: '行を削除', action: () => { onDeleteRow(rowIdx); setSelectedRow(null); setSelectedField(null); } }]
+        ? [{
+            type: 'item' as const,
+            label: '行を削除',
+            action: () => {
+              if (!window.confirm('この行を削除しますか？')) return;
+              onDeleteRow(rowIdx);
+              setSelectedRow(null);
+              setSelectedField(null);
+            },
+          }]
         : []),
     ];
     return items;
-  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table.records, updateCellRich]);
+  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table, onSave, updateCellRich]);
+
+  // 列移動: AG Grid の表示順を table.fields の順序に反映（base_fields は移動不可なので無視）
+  const onColumnMoved = useCallback((e: ColumnMovedEvent) => {
+    if (!e.finished) return;
+    if (e.source !== 'uiColumnMoved' && e.source !== 'uiColumnDragged') return; // プログラム経由は無視
+    const api = gridRef.current?.api;
+    if (!api) return;
+    const orderedNames = api.getAllGridColumns().map((c) => c.getColId());
+    const tableFieldNames = new Set(tableRef.current.fields.map((f) => f.name));
+    const newOrder = orderedNames.filter((n) => tableFieldNames.has(n));
+    const fieldMap = new Map(tableRef.current.fields.map((f) => [f.name, f]));
+    const reordered = newOrder.map((n) => fieldMap.get(n)!).filter(Boolean);
+    // 順序が変わっていなければ保存しない
+    const same = reordered.length === tableRef.current.fields.length
+      && reordered.every((f, i) => f.name === tableRef.current.fields[i].name);
+    if (same) return;
+    onSaveRef.current({ ...tableRef.current, fields: reordered });
+  }, []);
+
+  // 列リサイズ: 確定時のみ table.column_widths に保存（base_fields も table.fields も統一管理）
+  const onColumnResized = useCallback((e: ColumnResizedEvent) => {
+    if (!e.finished || !e.column) return;
+    if (e.source !== 'uiColumnResized' && e.source !== 'uiColumnDragged') return; // flex/auto/api 経由は無視
+
+    const fieldName = e.column.getColId();
+    const width = e.column.getActualWidth();
+    const t = tableRef.current;
+    if (t.column_widths?.[fieldName] === width) return;
+    const newWidths = { ...(t.column_widths ?? {}), [fieldName]: width };
+    onSaveRef.current({ ...t, column_widths: newWidths });
+  }, []);
 
   // Row drag: sync new order back to records (preserve filtered-out rows at end)
   const onRowDragEnd = useCallback((_e: RowDragEndEvent) => {
@@ -557,6 +921,7 @@ export function TableView({
         if (!field || !isFieldEditable(field)) continue;
         const existing = newRecords[rowIdx][fieldName] as Cell;
         const parsed = parseValue(newValue, field);
+        if (parsed === undefined) continue; // 型不一致はスキップ
         if (isRichCell(existing)) {
           newRecords[rowIdx] = { ...newRecords[rowIdx], [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
         } else {
@@ -602,6 +967,8 @@ export function TableView({
           stopEditingWhenCellsLoseFocus
           suppressContextMenu
           onCellContextMenu={onCellContextMenu}
+          onColumnMoved={onColumnMoved}
+          onColumnResized={onColumnResized}
           onFilterChanged={() => {
             const model = gridRef.current?.api?.getFilterModel();
             setFilterActive(!!model && Object.keys(model).length > 0);
@@ -634,6 +1001,29 @@ export function TableView({
           />
         )}
       </div>
+      {fieldEditTargetDef && (
+        <FieldEditModal
+          key={fieldEditTargetDef.name}
+          field={fieldEditTargetDef}
+          onSave={(updated) => {
+            const newFields = table.fields.map((f) => f.name === updated.name ? updated : f);
+            onSave({ ...table, fields: newFields });
+          }}
+          onClose={() => setFieldEditTarget(null)}
+        />
+      )}
+      {showAddColumnModal && (
+        <AddColumnModal
+          existingNames={new Set(fields.map((f) => f.name))}
+          onAdd={(newField) => {
+            onSave({ ...table, fields: [...table.fields, newField] });
+          }}
+          onClose={() => {
+            setShowAddColumnModal(false);
+            onAddColumnOpenChange?.(false);
+          }}
+        />
+      )}
       <CellDetailPanel
         fieldName={selectedField}
         cell={selectedCell}

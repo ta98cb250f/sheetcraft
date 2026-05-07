@@ -63,9 +63,10 @@ gh api repos/ta98cb250f/sheetcraft/pulls/<番号> --method PATCH --field body=".
   - `RichCell`: `{ value?, override?, color?, comment? }` — セルに色・コメント・式オーバーライドを付加
   - `isRichCell(cell)` で判定
 - **`TableFile`**: `{ table, display_name, fields, records }` — 1ファイル = 1テーブル
-- **`FieldDef`**: `type` は `int | float | string | bool | enum | list<int> | list<string> | computed`
-  - `computed` フィールドは `formula` で計算式を指定。`RichCell.override` で個別上書き可能
+- **`FieldDef`**: `type` は `int | float | string | bool | enum | list<int> | list<string>`
+  - 任意の非 enum フィールドは `formula` で列レベルのデフォルト式を指定可能。優先順位: セル値 > セルの `=` 式（`RichCell.override`）> 列の `formula`
   - `auto: "increment"` で id 自動採番
+- **`TableFile.column_widths`**: `{ [fieldName]: number }` 形式の列幅マップ。`base_fields` と `table.fields` の両方を統一管理
 
 ## GUI 設計
 
@@ -94,6 +95,8 @@ gh api repos/ta98cb250f/sheetcraft/pulls/<番号> --method PATCH --field body=".
 1. **対象APIの仕様を調べる** — イベントがどのユーザー操作で発火するか、他のイベントと連鎖するかを把握する
 2. **影響範囲を列挙する** — 変更が既存機能（他のイベントハンドラ、キーボード操作、選択状態など）に波及しないか確認する
 3. **根拠を持って実装する** — 「たぶん動く」で変更しない。不明点はコードを読む・ドキュメントを参照する
+4. **UI変更の対象コンポーネントを特定してから実装する** — 「ヘッダーに出す」「列に出す」など場所を示す指示は、`/find-component` で対象ファイル・コンポーネントを確認してから編集する。思い込みで実装しない
+5. **AG Grid の機能は Community 版で使えるか事前に確認する** — `/check-agrid-community <機能名>` で Enterprise 参照の有無を確認してから実装する
 
 ## AG Grid イベント設計ルール（エンバグ防止）
 

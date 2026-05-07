@@ -15,12 +15,13 @@ type Props = {
   onUndo: () => void;
   onRedo: () => void;
   onExportJSON: () => void;
+  onAddColumn: () => void;
 };
 
 export function Toolbar({
   hasFolder, hasTable, isDirty, canUndo, canRedo, validation,
   savedFolderName, onOpenFolder, onReopenLastFolder, onSave, onAddRow, onUndo, onRedo,
-  onExportJSON,
+  onExportJSON, onAddColumn,
 }: Props) {
   const errorCount = validation?.errors.length ?? 0;
   const warnCount = validation?.warnings.length ?? 0;
@@ -49,6 +50,9 @@ export function Toolbar({
             <div style={styles.separator} />
             <button style={styles.btn} onClick={onAddRow} title="行を追加">
               ＋ 行を追加
+            </button>
+            <button style={styles.btn} onClick={onAddColumn} title="列を追加">
+              ＋ 列を追加
             </button>
             <button
               style={{ ...styles.btn, ...(isDirty ? styles.btnPrimary : {}) }}

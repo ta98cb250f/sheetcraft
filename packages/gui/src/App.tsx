@@ -4,7 +4,7 @@ import { Toolbar } from './components/Toolbar.js';
 import { TableList } from './components/TableList.js';
 import { TableView } from './components/TableView.js';
 import { validateTable as validateTableFn, isRichCell, exportToJSON } from '@sheetcraft/core';
-import type { TableFile, ValidationResult, Cell } from '@sheetcraft/core';
+import type { TableFile, ValidationResult, Cell, Record as MasterRecord } from '@sheetcraft/core';
 
 const MAX_HISTORY = 50;
 
@@ -21,6 +21,7 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [pendingTable, setPendingTable] = useState<TableFile | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [addColumnOpen, setAddColumnOpen] = useState(false);
 
   // Undo/Redo history (per selected table)
   const historyRef = useRef<TableFile[]>([]);
@@ -105,6 +106,7 @@ export function App() {
     setPendingTable(null);
     setDirty(false);
     setValidation(null);
+    setAddColumnOpen(false);
     historyRef.current = [];
     futureRef.current = [];
     selectTable(name);
@@ -117,9 +119,13 @@ export function App() {
       const v = getNumericCellValue(r['id'] as Cell | undefined);
       return v > m ? v : m;
     }, 0);
-    const newRecord = { id: maxId + 1, version: 1 };
+    // Determine default version value based on field type (string → "1.0.0", int → 1)
+    const baseFields = state.baseFields?.base_fields ?? [];
+    const versionField = [...baseFields, ...currentTable.fields].find((f) => f.name === 'version');
+    const defaultVersion = versionField?.type === 'string' ? '1.0.0' : 1;
+    const newRecord: MasterRecord = { id: maxId + 1, version: defaultVersion };
     handleTableChange({ ...currentTable, records: [...currentTable.records, newRecord] });
-  }, [currentTable, handleTableChange]);
+  }, [currentTable, handleTableChange, state.baseFields]);
 
   const downloadFile = useCallback((content: string, filename: string, mime: string) => {
     const blob = new Blob([content], { type: mime });
@@ -166,6 +172,7 @@ export function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onExportJSON={handleExportJSON}
+        onAddColumn={() => setAddColumnOpen(true)}
       />
       <div style={styles.body}>
         {state.tableNames.length > 0 && (
@@ -204,6 +211,8 @@ export function App() {
               onSave={handleTableChange}
               onAddRow={handleAddRow}
               onDeleteRow={handleDeleteRow}
+              addColumnOpen={addColumnOpen}
+              onAddColumnOpenChange={setAddColumnOpen}
             />
           )}
         </main>

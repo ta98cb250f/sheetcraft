@@ -17,7 +17,7 @@ export class SchemaError extends Error {
 
 const VALID_TYPES = new Set([
   'int', 'float', 'string', 'bool', 'enum',
-  'list<int>', 'list<string>', 'computed',
+  'list<int>', 'list<string>',
 ]);
 
 export function parseTableFile(raw: unknown): TableFile {
@@ -39,11 +39,15 @@ export function parseTableFile(raw: unknown): TableFile {
   const fields = (obj['fields'] as unknown[]).map((f, i) => parseFieldDef(f, i));
   validateFieldNames(fields);
 
+  const column_widths = obj['column_widths'];
   return {
     table: obj['table'] as string,
     display_name: typeof obj['display_name'] === 'string' ? obj['display_name'] : undefined,
     fields,
     records: obj['records'] as Record[],
+    ...(column_widths && typeof column_widths === 'object' && !Array.isArray(column_widths)
+      ? { column_widths: column_widths as { [k: string]: number } }
+      : {}),
   };
 }
 
@@ -63,9 +67,6 @@ function parseFieldDef(raw: unknown, index: number): FieldDef {
   }
   if ((f['type'] as string) === 'enum' && typeof f['enum_ref'] !== 'string') {
     throw new SchemaError(`Field "${f['name']}" of type "enum" must have "enum_ref"`);
-  }
-  if ((f['type'] as string) === 'computed' && typeof f['formula'] !== 'string') {
-    throw new SchemaError(`Field "${f['name']}" of type "computed" must have "formula"`);
   }
 
   return f as unknown as FieldDef;

@@ -357,20 +357,18 @@ export function evaluate(
 }
 
 export function detectComputedCycles(fields: import('./types.js').FieldDef[]): string[] {
-  const computedNames = new Set(
-    fields.filter((f) => f.type === 'computed').map((f) => f.name)
-  );
-  if (computedNames.size === 0) return [];
+  const formulaFields = fields.filter((f) => typeof f.formula === 'string' && f.formula.length > 0);
+  const formulaNames = new Set(formulaFields.map((f) => f.name));
+  if (formulaNames.size === 0) return [];
 
   const namePatterns = new Map<string, RegExp>();
-  for (const cf of computedNames) namePatterns.set(cf, new RegExp(`\\b${cf}\\b`));
+  for (const cf of formulaNames) namePatterns.set(cf, new RegExp(`\\b${cf}\\b`));
 
   const deps = new Map<string, Set<string>>();
-  for (const f of fields) {
-    if (f.type !== 'computed') continue;
+  for (const f of formulaFields) {
     const formula = f.formula ?? '';
     const fieldDeps = new Set<string>();
-    for (const cf of computedNames) {
+    for (const cf of formulaNames) {
       if (namePatterns.get(cf)!.test(formula)) fieldDeps.add(cf);
     }
     deps.set(f.name, fieldDeps);
@@ -402,36 +400,46 @@ export function computeRecord(
   formulaErrors?: Array<{ field: string; message: string }>
 ): Record {
   const result: Record = { ...record };
+  const evalFormula = (expr: string, fieldName: string): import('./types.js').SimpleCell | undefined => {
+    try {
+      return evaluate(expr, result, refTables) as import('./types.js').SimpleCell;
+    } catch (e) {
+      if (e instanceof FormulaError) {
+        if (formulaErrors) formulaErrors.push({ field: fieldName, message: e.message });
+      } else {
+        console.warn(`Unexpected error evaluating formula for "${fieldName}":`, e);
+      }
+      return undefined;
+    }
+  };
+
   for (const field of fields) {
-    if (field.type !== 'computed') continue;
     const cell = record[field.name];
+
+    // 優先順: セル値 > セルの = 式（override） > 列の formula
+    // null と undefined はどちらも「未設定」として同等に扱う
+    if (cell === undefined || cell === null) {
+      if (field.formula) {
+        const v = evalFormula(field.formula, field.name);
+        if (v !== undefined) result[field.name] = v;
+      }
+      continue;
+    }
     if (isRichCell(cell as Cell)) {
       const rich = cell as import('./types.js').RichCell;
       if (rich.value !== undefined) { result[field.name] = rich.value; continue; }
       if (rich.override) {
-        try {
-          result[field.name] = evaluate(rich.override, result, refTables) as import('./types.js').SimpleCell;
-        } catch (e) {
-          if (e instanceof FormulaError) {
-            if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
-          } else {
-            console.warn(`Unexpected error evaluating override for "${field.name}":`, e);
-          }
-        }
+        const v = evalFormula(rich.override, field.name);
+        if (v !== undefined) result[field.name] = v;
         continue;
       }
-    }
-    if (field.formula) {
-      try {
-        result[field.name] = evaluate(field.formula, result, refTables) as import('./types.js').SimpleCell;
-      } catch (e) {
-        if (e instanceof FormulaError) {
-          if (formulaErrors) formulaErrors.push({ field: field.name, message: e.message });
-        } else {
-          console.warn(`Unexpected error evaluating formula "${field.formula}":`, e);
-        }
+      // RichCell に value も override もない → 列 formula にフォールバック
+      if (field.formula) {
+        const v = evalFormula(field.formula, field.name);
+        if (v !== undefined) result[field.name] = v;
       }
     }
+    // SimpleCell や配列はそのまま使う（既に result にコピー済み）
   }
   return result;
 }

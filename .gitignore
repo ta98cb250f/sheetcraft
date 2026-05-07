@@ -1,5 +1,6 @@
 node_modules/
 dist/
 build/
+!.claude/skills/build/
 *.js.map
 .vite/
