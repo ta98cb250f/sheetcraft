@@ -14,7 +14,7 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
   const [displayName, setDisplayName] = useState(field.display_name ?? '');
   const [exportField, setExportField] = useState(field.export !== false);
   const [editable, setEditable] = useState(field.editable !== false);
-  const [formula, setFormula] = useState(field.formula ?? '');
+  const [formula, setFormula] = useState(field.formula ? `=${field.formula}` : '');
 
   const [valMin, setValMin] = useState(field.validation?.min !== undefined ? String(field.validation.min) : '');
   const [valMax, setValMax] = useState(field.validation?.max !== undefined ? String(field.validation.max) : '');
@@ -54,8 +54,8 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
       ...field,
       display_name: displayName.trim() || undefined,
       export: exportField ? undefined : false,
-      ...(!field.auto && field.type !== 'computed' ? { editable: editable ? undefined : false } : {}),
-      ...(field.type === 'computed' ? { formula: formula.trim() || undefined } : {}),
+      ...(!field.auto ? { editable: editable ? undefined : false } : {}),
+      ...(field.type !== 'enum' ? { formula: formula.trim().startsWith('=') ? formula.trim().slice(1) || undefined : undefined } : {}),
       validation: Object.keys(validation).length > 0 ? validation : undefined,
       anomaly: Object.keys(anomaly).length > 0 ? anomaly : undefined,
     };
@@ -92,21 +92,21 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
             <input type="checkbox" checked={exportField} onChange={(e) => setExportField(e.target.checked)} />
           </div>
 
-          {!field.auto && field.type !== 'computed' && (
+          {!field.auto && (
             <div style={styles.row}>
               <label style={styles.label}>GUI から編集可能</label>
               <input type="checkbox" checked={editable} onChange={(e) => setEditable(e.target.checked)} />
             </div>
           )}
 
-          {field.type === 'computed' && (
+          {field.type !== 'enum' && (
             <div style={styles.row}>
               <label style={styles.label}>計算式</label>
               <input
                 style={styles.inputWide}
                 value={formula}
                 onChange={(e) => setFormula(e.target.value)}
-                placeholder="例: price * quantity"
+                placeholder="=price * quantity"
               />
             </div>
           )}
@@ -146,7 +146,7 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
           )}
 
           <div style={styles.row}>
-            <label style={styles.label}>一意制約</label>
+            <label style={styles.label}>重複禁止</label>
             <input type="checkbox" checked={valUnique} onChange={(e) => setValUnique(e.target.checked)} />
           </div>
 

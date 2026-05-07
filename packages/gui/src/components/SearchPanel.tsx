@@ -27,7 +27,7 @@ export function SearchPanel({ mode, fields, records, onClose, onNavigate, onRepl
   const [currentIdx, setCurrentIdx] = useState(0);
 
   const editableFields = useMemo(
-    () => fields.filter((f) => f.type !== 'computed' && f.editable !== false && !f.auto),
+    () => fields.filter((f) => f.editable !== false && !f.auto),
     [fields]
   );
 

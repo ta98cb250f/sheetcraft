@@ -43,8 +43,7 @@ export type FieldType =
   | 'bool'
   | 'enum'
   | 'list<int>'
-  | 'list<string>'
-  | 'computed';
+  | 'list<string>';
 
 export type FieldDef = {
   name: string;
@@ -59,7 +58,7 @@ export type FieldDef = {
   enum_ref?: string;
   // ref
   ref?: string; // e.g. "skill_master.id"
-  // computed
+  // 列レベルのデフォルト式（任意の型で使用可能。セルに値や override がない場合に評価される）
   formula?: string;
   // validation
   validation?: ValidationRule;

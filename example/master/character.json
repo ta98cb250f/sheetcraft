@@ -56,9 +56,10 @@
     },
     {
       "name": "effective_hp",
-      "type": "computed",
+      "type": "float",
       "display_name": "実効HP",
       "formula": "hp * (1 + defense / 100)",
+      "editable": false,
       "export": true
     },
     {

@@ -67,7 +67,7 @@ function toRichCell(cell: Cell | undefined, patch: Partial<RichCell>): RichCell 
 
 function isFieldEditable(field: FieldDef): boolean {
   // increment auto fields (id) are locked; timestamp_version fields are now manually editable
-  return field.type !== 'computed' && field.editable !== false && field.auto !== 'increment';
+  return field.editable !== false && field.auto !== 'increment';
 }
 
 function versionComparator(a: unknown, b: unknown): number {
@@ -87,6 +87,7 @@ function isVersionField(field: FieldDef): boolean {
 
 type ColumnHeaderParams = IHeaderParams & {
   isTableField: boolean;
+  fieldName: string;
   onSettings?: () => void;
   onDelete?: () => void;
   onAddColumn: () => void;
@@ -95,7 +96,7 @@ type ColumnHeaderParams = IHeaderParams & {
 
 function ColumnHeader(params: ColumnHeaderParams) {
   const { displayName, column, enableSorting, progressSort, api,
-    isTableField, onSettings, onDelete, onAddColumn, hasHeaderCheckbox } = params;
+    isTableField, fieldName, onSettings, onDelete, onAddColumn, hasHeaderCheckbox } = params;
 
   const [sort, setSort] = useState<'asc' | 'desc' | null>(column.getSort() ?? null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -149,9 +150,10 @@ function ColumnHeader(params: ColumnHeaderParams) {
       )}
       <span
         onClick={(e) => { if (enableSorting) progressSort(e.shiftKey); }}
-        style={{ flex: 1, cursor: enableSorting ? 'pointer' : 'default', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', userSelect: 'none' }}
+        style={{ flex: 1, cursor: enableSorting ? 'pointer' : 'default', overflow: 'hidden', userSelect: 'none' }}
       >
-        {displayName}{sortIcon}
+        <div style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{displayName}{sortIcon}</div>
+        <div style={{ fontSize: 10, color: '#aaa', fontFamily: 'monospace', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{fieldName}</div>
       </span>
       <div style={{ position: 'relative', flexShrink: 0 }}>
         <button
@@ -336,7 +338,7 @@ export function TableView({
         } else if (f.type === 'bool') {
           cellEditorSelector = () => ({ component: 'agCheckboxCellEditor' });
         } else if (f.type === 'int' || f.type === 'float') {
-          cellEditorSelector = () => ({ component: 'agNumberCellEditor' });
+          cellEditorSelector = () => ({ component: 'agTextCellEditor' });
         } else {
           cellEditorSelector = () => ({ component: 'agTextCellEditor' });
         }
@@ -346,7 +348,7 @@ export function TableView({
         const rowIdx = (params.data as { _idx: number })._idx;
         const raw = tableRecordsRef.current[rowIdx]?.[f.name];
         const hasComment = isRichCell(raw as Cell) && !!(raw as RichCell).comment;
-        const hasFormula = f.type !== 'computed' && isRichCell(raw as Cell) && !!(raw as RichCell).override;
+        const hasFormula = isRichCell(raw as Cell) && !!(raw as RichCell).override;
         const val = String(params.value ?? '');
         if (!hasComment && !hasFormula) return val;
         return (
@@ -391,6 +393,7 @@ export function TableView({
         headerComponent: ColumnHeader,
         headerComponentParams: {
           isTableField,
+          fieldName,
           hasHeaderCheckbox: i === 0,
           onSettings: isTableField ? () => setFieldEditTarget(fieldName) : undefined,
           onDelete: isTableField ? () => {
@@ -403,18 +406,25 @@ export function TableView({
           } : undefined,
           onAddColumn: () => setShowAddColumnModal(true),
         },
-        cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string> } }) => {
+        cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string>; _idx: number } }) => {
           const hasError = params.data._errFields?.has(f.name);
           const hasWarn = params.data._warnFields?.has(f.name);
           if (hasError) return { border: '2px solid #e53935', background: '#fff8f8', color: 'inherit', fontStyle: 'normal' };
           if (hasWarn) return { border: '2px solid #fdd835', background: '#fffde7', color: 'inherit', fontStyle: 'normal' };
-          if (f.type === 'computed') return { color: '#999', fontStyle: 'italic', border: '', background: '' };
-          return { border: '', background: '', color: 'inherit', fontStyle: 'normal' };
+          const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
+          const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
+          const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
+          // 列に formula があり、セルに値も = 式もない場合は computed 表示（グレー斜体）
+          const usesColumnFormula = !!f.formula && (raw === undefined || raw === null
+            || (isRichCell(raw as Cell) && (raw as RichCell).value === undefined && !(raw as RichCell).override));
+          if (usesColumnFormula) return { color: '#999', fontStyle: 'italic', border: '', background: colorHex || (f.export === false ? '#f0f0f0' : '') };
+          if (f.export === false) return { border: '', background: colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
+          return { border: '', background: colorHex, color: 'inherit', fontStyle: 'normal' };
         },
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
     });
-  }, [fields, enums, pinnedColumns, table.fields, setFieldEditTarget]);
+  }, [fields, enums, pinnedColumns, table.fields, cellColors, setFieldEditTarget]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -473,8 +483,8 @@ export function TableView({
     if (Array.isArray(raw)) return (raw as (string | number)[]).join(', ') as Cell;
     // 未設定の場合
     if (raw === undefined) {
-      // computed フィールドは算出値を表示
-      if (selectedFieldDef?.type === 'computed') {
+      // 列に formula があれば算出値を表示
+      if (selectedFieldDef?.formula) {
         const computed = computeRecord(record, fields);
         const val = computed[selectedField];
         if (val !== undefined && !Array.isArray(val)) return val as Cell;
@@ -682,7 +692,7 @@ export function TableView({
             },
           ]
         : []),
-      ...(field?.type === 'computed' && rowIdx !== null && fieldName
+      ...(field && isFieldEditable(field) && rowIdx !== null && fieldName
         ? [{
             type: 'item' as const, label: '式をオーバーライド',
             action: () => {
@@ -882,6 +892,7 @@ export function TableView({
       </div>
       {fieldEditTargetDef && (
         <FieldEditModal
+          key={fieldEditTargetDef.name}
           field={fieldEditTargetDef}
           onSave={(updated) => {
             const newFields = table.fields.map((f) => f.name === updated.name ? updated : f);

@@ -8,7 +8,7 @@ type Props = {
 };
 
 const FIELD_TYPES: FieldType[] = [
-  'int', 'float', 'string', 'bool', 'enum', 'list<int>', 'list<string>', 'computed',
+  'int', 'float', 'string', 'bool', 'enum', 'list<int>', 'list<string>',
 ];
 
 const NAME_PATTERN = /^[a-z_][a-z0-9_]*$/;
@@ -103,7 +103,7 @@ export function AddColumnModal({ existingNames, onAdd, onClose }: Props) {
               ※ enum_ref の設定は JSON ファイルを直接編集してください
             </div>
           )}
-          {(type === 'computed') && (
+          {(type !== 'enum') && (
             <div style={styles.note}>
               ※ 計算式は追加後に「列の設定を編集」から設定できます
             </div>

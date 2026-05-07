@@ -55,7 +55,7 @@ describe('computeRecord', () => {
     const fields = [
       { name: 'hp', type: 'int' as const, export: true },
       { name: 'defense', type: 'int' as const, export: true },
-      { name: 'effective_hp', type: 'computed' as const, formula: 'hp * (1 + defense / 100)', export: true },
+      { name: 'effective_hp', type: 'float' as const, formula: 'hp * (1 + defense / 100)', export: true },
     ];
     const result = computeRecord(record, fields);
     expect(result['effective_hp']).toBeCloseTo(2000);
@@ -65,7 +65,7 @@ describe('computeRecord', () => {
     const record: Record = { hp: 1000, effective_hp: { override: 'hp * 2' } };
     const fields = [
       { name: 'hp', type: 'int' as const, export: true },
-      { name: 'effective_hp', type: 'computed' as const, formula: 'hp * 1', export: true },
+      { name: 'effective_hp', type: 'float' as const, formula: 'hp * 1', export: true },
     ];
     const result = computeRecord(record, fields);
     expect(result['effective_hp']).toBe(2000);
@@ -75,7 +75,7 @@ describe('computeRecord', () => {
     const record: Record = { hp: 1000, effective_hp: { value: 9999 } };
     const fields = [
       { name: 'hp', type: 'int' as const, export: true },
-      { name: 'effective_hp', type: 'computed' as const, formula: 'hp * 1', export: true },
+      { name: 'effective_hp', type: 'float' as const, formula: 'hp * 1', export: true },
     ];
     const result = computeRecord(record, fields);
     expect(result['effective_hp']).toBe(9999);

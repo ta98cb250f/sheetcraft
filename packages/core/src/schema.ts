@@ -17,7 +17,7 @@ export class SchemaError extends Error {
 
 const VALID_TYPES = new Set([
   'int', 'float', 'string', 'bool', 'enum',
-  'list<int>', 'list<string>', 'computed',
+  'list<int>', 'list<string>',
 ]);
 
 export function parseTableFile(raw: unknown): TableFile {
@@ -63,9 +63,6 @@ function parseFieldDef(raw: unknown, index: number): FieldDef {
   }
   if ((f['type'] as string) === 'enum' && typeof f['enum_ref'] !== 'string') {
     throw new SchemaError(`Field "${f['name']}" of type "enum" must have "enum_ref"`);
-  }
-  if ((f['type'] as string) === 'computed' && typeof f['formula'] !== 'string') {
-    throw new SchemaError(`Field "${f['name']}" of type "computed" must have "formula"`);
   }
 
   return f as unknown as FieldDef;
