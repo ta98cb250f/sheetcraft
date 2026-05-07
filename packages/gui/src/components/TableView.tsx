@@ -11,6 +11,7 @@ import type {
   CellFocusedEvent,
   Column,
   ICellRendererParams,
+  IHeaderParams,
   RowDragEndEvent,
 } from 'ag-grid-community';
 import { ContextMenu } from './ContextMenu.js';
@@ -84,6 +85,124 @@ function isVersionField(field: FieldDef): boolean {
   return field.auto === 'timestamp_version' || field.name === 'version';
 }
 
+type ColumnHeaderParams = IHeaderParams & {
+  isTableField: boolean;
+  onSettings?: () => void;
+  onDelete?: () => void;
+  onAddColumn: () => void;
+  hasHeaderCheckbox: boolean;
+};
+
+function ColumnHeader(params: ColumnHeaderParams) {
+  const { displayName, column, enableSorting, progressSort, api,
+    isTableField, onSettings, onDelete, onAddColumn, hasHeaderCheckbox } = params;
+
+  const [sort, setSort] = useState<'asc' | 'desc' | null>(column.getSort() ?? null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [allSelected, setAllSelected] = useState(false);
+  const [someSelected, setSomeSelected] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onSort = () => setSort(column.getSort() ?? null);
+    column.addEventListener('sortChanged', onSort);
+    return () => column.removeEventListener('sortChanged', onSort);
+  }, [column]);
+
+  useEffect(() => {
+    if (!hasHeaderCheckbox) return;
+    const update = () => {
+      let total = 0, sel = 0;
+      api.forEachNodeAfterFilter((n) => { total++; if (n.isSelected()) sel++; });
+      setAllSelected(total > 0 && sel === total);
+      setSomeSelected(sel > 0 && sel < total);
+    };
+    api.addEventListener('selectionChanged', update);
+    api.addEventListener('filterChanged', update);
+    return () => {
+      api.removeEventListener('selectionChanged', update);
+      api.removeEventListener('filterChanged', update);
+    };
+  }, [api, hasHeaderCheckbox]);
+
+  useEffect(() => {
+    if (!menuPos) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuPos(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuPos]);
+
+  const sortIcon = sort === 'asc' ? ' ▲' : sort === 'desc' ? ' ▼' : '';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', width: '100%', height: '100%', gap: 2 }}>
+      {hasHeaderCheckbox && (
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => { if (el) el.indeterminate = someSelected; }}
+          onChange={() => allSelected ? api.deselectAll() : api.selectAllFiltered()}
+          style={{ margin: '0 2px 0 0', flexShrink: 0, cursor: 'pointer' }}
+        />
+      )}
+      <span
+        onClick={(e) => { if (enableSorting) progressSort(e.shiftKey); }}
+        style={{ flex: 1, cursor: enableSorting ? 'pointer' : 'default', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', userSelect: 'none' }}
+      >
+        {displayName}{sortIcon}
+      </span>
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (menuPos) { setMenuPos(null); return; }
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenuPos({ top: rect.bottom, left: rect.left });
+          }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 3px', fontSize: 15, color: '#888', lineHeight: 1 }}
+          title="列メニュー"
+        >
+          ⋮
+        </button>
+        {menuPos && (
+          <div
+            ref={menuRef}
+            style={{
+              position: 'fixed', top: menuPos.top, left: menuPos.left,
+              background: '#fff', border: '1px solid #ddd', borderRadius: 4,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 9999, minWidth: 160, fontSize: 13,
+            }}
+          >
+            {isTableField && onSettings && (
+              <div onClick={() => { setMenuPos(null); onSettings(); }} style={colMenuItemStyle}
+                onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                この列の設定を編集
+              </div>
+            )}
+            {isTableField && onDelete && (
+              <div onClick={() => { setMenuPos(null); onDelete(); }} style={{ ...colMenuItemStyle, color: '#c62828' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+                onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                この列を削除
+              </div>
+            )}
+            <div onClick={() => { setMenuPos(null); onAddColumn(); }} style={colMenuItemStyle}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f5f5')}
+              onMouseLeave={e => (e.currentTarget.style.background = '')}>
+              列を追加
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const colMenuItemStyle: React.CSSProperties = { padding: '6px 12px', cursor: 'pointer' };
+
 function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
   if (field.type === 'bool') {
     if (typeof raw === 'boolean') return raw;
@@ -153,6 +272,10 @@ export function TableView({
   const gridRef = useRef<AgGridReact>(null);
   const tableRecordsRef = useRef(table.records);
   tableRecordsRef.current = table.records;
+  const tableRef = useRef(table);
+  tableRef.current = table;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [searchState, setSearchState] = useState<SearchState | null>(null);
@@ -250,6 +373,9 @@ export function TableView({
         );
       };
 
+      const isTableField = table.fields.some((tf) => tf.name === f.name);
+      const fieldName = f.name;
+
       return {
         field: f.name,
         headerName: f.display_name ?? f.name,
@@ -261,9 +387,22 @@ export function TableView({
         headerClass: f.export === false ? 'col-no-export' : '',
         rowDrag: i === 0,
         checkboxSelection: i === 0,
-        headerCheckboxSelection: i === 0,
-        headerCheckboxSelectionFilteredOnly: i === 0,
         pinned: pinnedColumns.has(f.name) ? ('left' as const) : undefined,
+        headerComponent: ColumnHeader,
+        headerComponentParams: {
+          isTableField,
+          hasHeaderCheckbox: i === 0,
+          onSettings: isTableField ? () => setFieldEditTarget(fieldName) : undefined,
+          onDelete: isTableField ? () => {
+            const t = tableRef.current;
+            const field = t.fields.find((f) => f.name === fieldName);
+            if (!window.confirm(`列「${field?.display_name ?? fieldName}」を削除しますか？`)) return;
+            const newFields = t.fields.filter((f) => f.name !== fieldName);
+            const newRecords = t.records.map((r) => { const next = { ...r }; delete next[fieldName]; return next; });
+            onSaveRef.current({ ...t, fields: newFields, records: newRecords });
+          } : undefined,
+          onAddColumn: () => setShowAddColumnModal(true),
+        },
         cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string> } }) => {
           const hasError = params.data._errFields?.has(f.name);
           const hasWarn = params.data._warnFields?.has(f.name);
@@ -275,7 +414,7 @@ export function TableView({
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
     });
-  }, [fields, enums, pinnedColumns]);
+  }, [fields, enums, pinnedColumns, table.fields, setFieldEditTarget]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -500,7 +639,7 @@ export function TableView({
     onSave({ ...table, records: newRecords });
   }, [table, onSave]);
 
-  // Right-click context menu
+  // Right-click context menu (cell)
   const onCellContextMenu = useCallback((e: CellContextMenuEvent) => {
     (e.event as MouseEvent)?.preventDefault();
     const rowIdx = e.node ? (e.node.data as { _idx: number })._idx : null;
@@ -508,6 +647,7 @@ export function TableView({
     const mouseEvent = e.event as MouseEvent;
     setContextMenu({ x: mouseEvent.clientX, y: mouseEvent.clientY, rowIdx, fieldName });
   }, []);
+
 
   const buildContextMenuItems = useCallback((): MenuItem[] => {
     if (!contextMenu) return [];
