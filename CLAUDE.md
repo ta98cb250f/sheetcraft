@@ -66,6 +66,7 @@ gh api repos/ta98cb250f/sheetcraft/pulls/<番号> --method PATCH --field body=".
 - **`FieldDef`**: `type` は `int | float | string | bool | enum | list<int> | list<string>`
   - 任意の非 enum フィールドは `formula` で列レベルのデフォルト式を指定可能。優先順位: セル値 > セルの `=` 式（`RichCell.override`）> 列の `formula`
   - `auto: "increment"` で id 自動採番
+- **`TableFile.column_widths`**: `{ [fieldName]: number }` 形式の列幅マップ。`base_fields` と `table.fields` の両方を統一管理
 
 ## GUI 設計
 

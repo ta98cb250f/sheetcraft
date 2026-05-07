@@ -417,6 +417,14 @@ export function computeRecord(
     const cell = record[field.name];
 
     // 優先順: セル値 > セルの = 式（override） > 列の formula
+    // null と undefined はどちらも「未設定」として同等に扱う
+    if (cell === undefined || cell === null) {
+      if (field.formula) {
+        const v = evalFormula(field.formula, field.name);
+        if (v !== undefined) result[field.name] = v;
+      }
+      continue;
+    }
     if (isRichCell(cell as Cell)) {
       const rich = cell as import('./types.js').RichCell;
       if (rich.value !== undefined) { result[field.name] = rich.value; continue; }
@@ -425,15 +433,13 @@ export function computeRecord(
         if (v !== undefined) result[field.name] = v;
         continue;
       }
-    } else if (cell !== undefined && cell !== null) {
-      // SimpleCell や配列はそのまま使う（既に result にコピー済み）
-      continue;
+      // RichCell に value も override もない → 列 formula にフォールバック
+      if (field.formula) {
+        const v = evalFormula(field.formula, field.name);
+        if (v !== undefined) result[field.name] = v;
+      }
     }
-
-    if (field.formula) {
-      const v = evalFormula(field.formula, field.name);
-      if (v !== undefined) result[field.name] = v;
-    }
+    // SimpleCell や配列はそのまま使う（既に result にコピー済み）
   }
   return result;
 }

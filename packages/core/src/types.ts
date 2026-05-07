@@ -80,6 +80,8 @@ export type TableFile = {
   display_name?: string;
   fields: FieldDef[];
   records: Record[];
+  // GUI 表示設定（base_fields も含めた全列の幅をフィールド名でマップ）
+  column_widths?: { [fieldName: string]: number };
 };
 
 // ---- Config files ----

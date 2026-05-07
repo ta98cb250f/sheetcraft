@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
@@ -10,6 +10,8 @@ import type {
   CellContextMenuEvent,
   CellFocusedEvent,
   Column,
+  ColumnMovedEvent,
+  ColumnResizedEvent,
   ICellRendererParams,
   IHeaderParams,
   RowDragEndEvent,
@@ -84,6 +86,55 @@ function versionComparator(a: unknown, b: unknown): number {
 function isVersionField(field: FieldDef): boolean {
   return field.auto === 'timestamp_version' || field.name === 'version';
 }
+
+// セル編集時、その行の _formulas にこの列の式があれば「=式」を初期値とするテキストエディタ
+type FormulaAwareEditorProps = {
+  value?: unknown;
+  data?: { _formulas?: { [k: string]: string } };
+  colDef?: { field?: string };
+  eventKey?: string | null;
+  charPress?: string | null;
+  stopEditing?: () => void;
+};
+
+const FormulaAwareTextEditor = forwardRef((props: FormulaAwareEditorProps, ref) => {
+  const fieldName = props.colDef?.field;
+  const formula = fieldName ? props.data?._formulas?.[fieldName] : undefined;
+  const initialValue = formula !== undefined
+    ? `=${formula}`
+    // BACKSPACE/DELETE で編集開始時はクリア、文字キー開始時はその文字、それ以外は既存値
+    : props.eventKey === 'Backspace' || props.eventKey === 'Delete'
+      ? ''
+      : props.charPress != null
+        ? props.charPress
+        : String(props.value ?? '');
+  const [val, setVal] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    getValue: () => val,
+    isCancelBeforeStart: () => false,
+    isCancelAfterEnd: () => false,
+  }));
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === 'Tab') props.stopEditing?.();
+      }}
+      style={{ width: '100%', height: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', padding: '0 8px' }}
+    />
+  );
+});
+FormulaAwareTextEditor.displayName = 'FormulaAwareTextEditor';
 
 type ColumnHeaderParams = IHeaderParams & {
   isTableField: boolean;
@@ -205,7 +256,7 @@ function ColumnHeader(params: ColumnHeaderParams) {
 
 const colMenuItemStyle: React.CSSProperties = { padding: '6px 12px', cursor: 'pointer' };
 
-function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
+function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] | undefined {
   if (field.type === 'bool') {
     if (typeof raw === 'boolean') return raw;
     const s = String(raw).toLowerCase();
@@ -213,13 +264,18 @@ function parseValue(raw: unknown, field: FieldDef): Cell | Cell[] {
   }
   if (field.type === 'int') {
     if (typeof raw === 'number') return Math.round(raw);
-    const n = parseInt(String(raw), 10);
-    return isNaN(n) ? String(raw) : n;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = parseInt(s, 10);
+    // 入力が数値として解釈できない場合は undefined を返し呼び出し側で破棄させる
+    return isNaN(n) || !/^-?\d+$/.test(s) ? undefined : n;
   }
   if (field.type === 'float') {
     if (typeof raw === 'number') return raw;
-    const n = parseFloat(String(raw));
-    return isNaN(n) ? String(raw) : n;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    const n = parseFloat(s);
+    return isNaN(n) || !/^-?\d*\.?\d+$/.test(s) ? undefined : n;
   }
   if (field.type === 'list<int>') {
     if (Array.isArray(raw)) return raw as Cell[];
@@ -245,10 +301,11 @@ function applyFormulaInput(
   val: string,
   field: FieldDef,
   existing: Cell | undefined
-): Cell | Cell[] | RichCell {
+): Cell | Cell[] | RichCell | undefined {
   const existingRich = existing !== undefined && isRichCell(existing as Cell);
   if (val.startsWith("'=")) {
     const literalVal = parseValue(val.slice(1), field);
+    if (literalVal === undefined) return existing; // 型に合わない値は破棄
     return existingRich
       ? { ...(existing as RichCell), value: literalVal as SimpleCell, override: undefined }
       : literalVal as Cell | Cell[];
@@ -260,6 +317,7 @@ function applyFormulaInput(
       : { override: formula };
   }
   const parsed = parseValue(val, field);
+  if (parsed === undefined) return existing; // 型に合わない値は破棄
   return existingRich
     ? { ...(existing as RichCell), value: parsed as SimpleCell, override: undefined }
     : parsed as Cell | Cell[];
@@ -303,7 +361,17 @@ export function TableView({
   const rowData = useMemo(() => {
     return table.records.map((record, idx) => {
       const computed = computeRecord(record, fields);
-      const row: { [k: string]: unknown } & { _idx: number; _errFields: Set<string>; _warnFields: Set<string> } = {
+      const formulas: { [k: string]: string } = {};
+      for (const f of fields) {
+        const raw = record[f.name];
+        if (isRichCell(raw as Cell) && (raw as RichCell).override) {
+          formulas[f.name] = (raw as RichCell).override as string;
+        }
+      }
+      const row: { [k: string]: unknown } & {
+        _idx: number; _errFields: Set<string>; _warnFields: Set<string>;
+        _formulas: { [k: string]: string };
+      } = {
         _idx: idx,
         _errFields: new Set(
           validation?.errors.filter((e) => e.recordIndex === idx).map((e) => e.field) ?? []
@@ -311,6 +379,7 @@ export function TableView({
         _warnFields: new Set(
           validation?.warnings.filter((w) => w.recordIndex === idx).map((w) => w.field) ?? []
         ),
+        _formulas: formulas,
       };
       for (const f of fields) {
         row[f.name] = getCellDisplayValue(computed[f.name] as Cell | undefined);
@@ -324,6 +393,8 @@ export function TableView({
     filter: true,
     resizable: true,
     minWidth: 60,
+    // 自動型変換を無効化（= 式入力や semver 文字列を NaN にしないため）
+    cellDataType: false,
   }), []);
 
   const colDefs = useMemo<ColDef[]>(() => {
@@ -337,10 +408,9 @@ export function TableView({
           cellEditorSelector = () => ({ component: 'agSelectCellEditor', params: { values } });
         } else if (f.type === 'bool') {
           cellEditorSelector = () => ({ component: 'agCheckboxCellEditor' });
-        } else if (f.type === 'int' || f.type === 'float') {
-          cellEditorSelector = () => ({ component: 'agTextCellEditor' });
         } else {
-          cellEditorSelector = () => ({ component: 'agTextCellEditor' });
+          // int/float/string/list は FormulaAwareTextEditor を使い、既存の = 式を編集可能にする
+          cellEditorSelector = () => ({ component: FormulaAwareTextEditor });
         }
       }
 
@@ -378,11 +448,13 @@ export function TableView({
       const isTableField = table.fields.some((tf) => tf.name === f.name);
       const fieldName = f.name;
 
+      const savedWidth = table.column_widths?.[f.name];
       return {
         field: f.name,
         headerName: f.display_name ?? f.name,
         editable: isEditable,
-        flex: 1,
+        suppressMovable: !isTableField,
+        ...(typeof savedWidth === 'number' ? { width: savedWidth } : { flex: 1 }),
         minWidth: 60,
         cellEditorSelector,
         cellRenderer: CommentCellRenderer,
@@ -414,17 +486,15 @@ export function TableView({
           const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
           const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
           const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
-          // 列に formula があり、セルに値も = 式もない場合は computed 表示（グレー斜体）
-          const usesColumnFormula = !!f.formula && (raw === undefined || raw === null
-            || (isRichCell(raw as Cell) && (raw as RichCell).value === undefined && !(raw as RichCell).override));
-          if (usesColumnFormula) return { color: '#999', fontStyle: 'italic', border: '', background: colorHex || (f.export === false ? '#f0f0f0' : '') };
+          // 編集不可フィールドはグレー斜体
+          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: colorHex || (f.export === false ? '#f0f0f0' : '') };
           if (f.export === false) return { border: '', background: colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
           return { border: '', background: colorHex, color: 'inherit', fontStyle: 'normal' };
         },
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
     });
-  }, [fields, enums, pinnedColumns, table.fields, cellColors, setFieldEditTarget]);
+  }, [fields, enums, pinnedColumns, table.fields, table.column_widths, cellColors, setFieldEditTarget]);
 
   const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
     const rowIdx = (e.data as { _idx: number })._idx;
@@ -436,12 +506,14 @@ export function TableView({
     const newRecords = table.records.map((r, i) => {
       if (i !== rowIdx) return r;
       const existing = r[fieldName] as Cell | undefined;
-      // = prefix formula input is only meaningful for string input
+      // 文字列入力は = 式判定込みで処理（int/float/string/list はすべて agTextCellEditor）
       if (typeof e.newValue === 'string') {
-        return { ...r, [fieldName]: applyFormulaInput(e.newValue, field, existing) };
+        const next = applyFormulaInput(e.newValue, field, existing);
+        return next === existing ? r : { ...r, [fieldName]: next };
       }
-      // bool / number from AG Grid native editors: parse directly
+      // bool checkbox エディタは boolean を返すため直接 parseValue
       const parsed = parseValue(e.newValue, field);
+      if (parsed === undefined) return r; // 型に合わない値は破棄
       const existingRich = existing !== undefined && isRichCell(existing as Cell);
       return {
         ...r,
@@ -504,7 +576,9 @@ export function TableView({
       const strVal = isRichCell(newCell)
         ? String((newCell as RichCell).value ?? '')
         : String(newCell);
-      valueToSave = parseValue(strVal, selectedFieldDef);
+      const parsed = parseValue(strVal, selectedFieldDef);
+      if (parsed === undefined) return; // 型不一致なら更新しない
+      valueToSave = parsed;
     }
 
     const newRecords = table.records.map((r, i) => {
@@ -547,7 +621,9 @@ export function TableView({
         const field = fields[startColIdx + colOffset];
         if (!field || !isFieldEditable(field)) return;
         const existing = record[field.name] as Cell | undefined;
-        record[field.name] = applyFormulaInput(val, field, existing);
+        const next = applyFormulaInput(val, field, existing);
+        if (next === undefined) return; // 型不一致のセルはスキップ
+        record[field.name] = next;
       });
       newRecords[recordIdx] = record;
     });
@@ -773,6 +849,37 @@ export function TableView({
     return items;
   }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table, onSave, updateCellRich]);
 
+  // 列移動: AG Grid の表示順を table.fields の順序に反映（base_fields は移動不可なので無視）
+  const onColumnMoved = useCallback((e: ColumnMovedEvent) => {
+    if (!e.finished) return;
+    if (e.source !== 'uiColumnMoved' && e.source !== 'uiColumnDragged') return; // プログラム経由は無視
+    const api = gridRef.current?.api;
+    if (!api) return;
+    const orderedNames = api.getAllGridColumns().map((c) => c.getColId());
+    const tableFieldNames = new Set(tableRef.current.fields.map((f) => f.name));
+    const newOrder = orderedNames.filter((n) => tableFieldNames.has(n));
+    const fieldMap = new Map(tableRef.current.fields.map((f) => [f.name, f]));
+    const reordered = newOrder.map((n) => fieldMap.get(n)!).filter(Boolean);
+    // 順序が変わっていなければ保存しない
+    const same = reordered.length === tableRef.current.fields.length
+      && reordered.every((f, i) => f.name === tableRef.current.fields[i].name);
+    if (same) return;
+    onSaveRef.current({ ...tableRef.current, fields: reordered });
+  }, []);
+
+  // 列リサイズ: 確定時のみ table.column_widths に保存（base_fields も table.fields も統一管理）
+  const onColumnResized = useCallback((e: ColumnResizedEvent) => {
+    if (!e.finished || !e.column) return;
+    if (e.source !== 'uiColumnResized' && e.source !== 'uiColumnDragged') return; // flex/auto/api 経由は無視
+
+    const fieldName = e.column.getColId();
+    const width = e.column.getActualWidth();
+    const t = tableRef.current;
+    if (t.column_widths?.[fieldName] === width) return;
+    const newWidths = { ...(t.column_widths ?? {}), [fieldName]: width };
+    onSaveRef.current({ ...t, column_widths: newWidths });
+  }, []);
+
   // Row drag: sync new order back to records (preserve filtered-out rows at end)
   const onRowDragEnd = useCallback((_e: RowDragEndEvent) => {
     if (!gridRef.current?.api) return;
@@ -813,6 +920,7 @@ export function TableView({
         if (!field || !isFieldEditable(field)) continue;
         const existing = newRecords[rowIdx][fieldName] as Cell;
         const parsed = parseValue(newValue, field);
+        if (parsed === undefined) continue; // 型不一致はスキップ
         if (isRichCell(existing)) {
           newRecords[rowIdx] = { ...newRecords[rowIdx], [fieldName]: { ...(existing as RichCell), value: parsed as SimpleCell } };
         } else {
@@ -858,6 +966,8 @@ export function TableView({
           stopEditingWhenCellsLoseFocus
           suppressContextMenu
           onCellContextMenu={onCellContextMenu}
+          onColumnMoved={onColumnMoved}
+          onColumnResized={onColumnResized}
           onFilterChanged={() => {
             const model = gridRef.current?.api?.getFilterModel();
             setFilterActive(!!model && Object.keys(model).length > 0);

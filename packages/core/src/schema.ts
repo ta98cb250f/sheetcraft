@@ -39,11 +39,15 @@ export function parseTableFile(raw: unknown): TableFile {
   const fields = (obj['fields'] as unknown[]).map((f, i) => parseFieldDef(f, i));
   validateFieldNames(fields);
 
+  const column_widths = obj['column_widths'];
   return {
     table: obj['table'] as string,
     display_name: typeof obj['display_name'] === 'string' ? obj['display_name'] : undefined,
     fields,
     records: obj['records'] as Record[],
+    ...(column_widths && typeof column_widths === 'object' && !Array.isArray(column_widths)
+      ? { column_widths: column_widths as { [k: string]: number } }
+      : {}),
   };
 }
 

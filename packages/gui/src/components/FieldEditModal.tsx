@@ -106,7 +106,6 @@ export function FieldEditModal({ field, onSave, onClose }: Props) {
                 style={styles.inputWide}
                 value={formula}
                 onChange={(e) => setFormula(e.target.value)}
-                placeholder="=price * quantity"
               />
             </div>
           )}
