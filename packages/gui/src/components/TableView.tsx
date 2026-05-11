@@ -388,6 +388,11 @@ export function TableView({
     if (addColumnOpen) setShowAddColumnModal(true);
   }, [addColumnOpen]);
 
+  // テーブル切替・列構造変化時は cellRange の表示インデックス/列インデックスが無効になるため解除
+  useEffect(() => {
+    setCellRange(null);
+  }, [table.table, table.fields.length]);
+
   const fields = useMemo(() => {
     return baseFields ? resolveFields(table.fields, baseFields) : table.fields;
   }, [table.fields, baseFields]);
