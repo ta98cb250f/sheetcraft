@@ -24,13 +24,14 @@ SpreadSheet / Excel と比較した際の機能差分と、実装上の既知バ
 Excel のようにセル右下角をドラッグして値・数列・パターンを隣接セルへ展開する機能。
 AG Grid Community では `enableFillHandle` が Enterprise 機能のため、カスタム実装が必要。
 
-### 1-6. セルの範囲選択 ⚠️ **未対応**
+### ~~1-6. セルの範囲選択~~ ✅ 対応済み
 
-Shift+クリックやドラッグで矩形範囲のセルを選択し、コピー・一括編集できるようにする。
-AG Grid Community では `enableRangeSelection` が Enterprise 機能のため、カスタム実装が必要。
-- 範囲選択 → Ctrl+C で TSV コピー
-- 範囲選択 → Delete で一括クリア
-- 範囲選択 → ペーストで矩形貼り付け
+ドラッグまたは Shift+クリックで矩形範囲を選択。`cellStyle` で選択範囲を青色背景で描画。
+AG Grid Community のため `enableRangeSelection` は使わず、grid root の DOM mousedown/mousemove/mouseup と `.ag-cell` の `col-id` / `.ag-row` の `row-index` 属性で位置解決するカスタム実装。
+- Ctrl+C で範囲を矩形 TSV としてコピー（範囲 > 行選択 > 単セルの優先順位）
+- Delete で範囲セルの値のみクリア（`color`/`comment` は維持）
+- Ctrl+V で範囲の左上を起点に矩形ペースト。クリップボードが 1×1 の場合は範囲全体に同値フィル
+- フィルタ・ソート変更時は表示インデックスが変わるため範囲を自動解除
 
 ---
 
@@ -241,4 +242,4 @@ Excel ライクに、セルの値が `=` で始まる場合は式として評価
 10. ~~computed 型を廃止し任意の型で列レベル formula 対応~~ ✅
 11. ~~列の並び順・幅を保存（FieldDef.formula と TableFile.column_widths）~~ ✅
 12. Autofill（1-5） ⚠️ **未対応**
-13. セルの範囲選択（1-6） ⚠️ **未対応**
+13. ~~セルの範囲選択（1-6）~~ ✅

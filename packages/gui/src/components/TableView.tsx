@@ -325,6 +325,34 @@ function applyFormulaInput(
 
 type SearchState = { show: boolean; mode: 'search' | 'replace' };
 
+// 範囲選択（表示インデックス + 列インデックス）。anchor = ドラッグ/Shift+クリックの起点
+type CellRange = { anchorRow: number; anchorCol: number; focusRow: number; focusCol: number };
+
+function normalizeRange(r: CellRange): { r0: number; r1: number; c0: number; c1: number } {
+  return {
+    r0: Math.min(r.anchorRow, r.focusRow),
+    r1: Math.max(r.anchorRow, r.focusRow),
+    c0: Math.min(r.anchorCol, r.focusCol),
+    c1: Math.max(r.anchorCol, r.focusCol),
+  };
+}
+
+function cellPosFromTarget(target: EventTarget | null, fields: FieldDef[]): { row: number; col: number } | null {
+  if (!(target instanceof Element)) return null;
+  const cellEl = target.closest('.ag-cell');
+  if (!cellEl) return null;
+  const colId = cellEl.getAttribute('col-id');
+  if (!colId) return null;
+  const rowEl = cellEl.closest('.ag-row');
+  if (!rowEl) return null;
+  const rowIdxStr = rowEl.getAttribute('row-index');
+  if (!rowIdxStr) return null;
+  const row = parseInt(rowIdxStr, 10);
+  const col = fields.findIndex((f) => f.name === colId);
+  if (col === -1 || isNaN(row)) return null;
+  return { row, col };
+}
+
 export function TableView({
   table, enums, cellColors, baseFields, validation, onSave, onAddRow, onDeleteRow,
   addColumnOpen, onAddColumnOpenChange,
@@ -344,6 +372,12 @@ export function TableView({
   const [filterActive, setFilterActive] = useState(false);
   const [fieldEditTarget, setFieldEditTarget] = useState<string | null>(null);
   const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+  const [cellRange, setCellRange] = useState<CellRange | null>(null);
+  // ドラッグ中の範囲（mousemove は ref を介して setCellRange へ反映）
+  const dragRangeRef = useRef<CellRange | null>(null);
+  const isDraggingRef = useRef(false);
+  const cellRangeRef = useRef<CellRange | null>(null);
+  cellRangeRef.current = cellRange;
 
   const fieldEditTargetDef = useMemo(
     () => fieldEditTarget ? (table.fields.find((f) => f.name === fieldEditTarget) ?? null) : null,
@@ -387,6 +421,22 @@ export function TableView({
       return row;
     });
   }, [table.records, fields, validation]);
+
+  // 範囲を「列名 → 表示行インデックス集合」に展開（cellStyle から O(1) で参照）
+  const rangeFieldRows = useMemo(() => {
+    if (!cellRange) return null;
+    const { r0, r1, c0, c1 } = normalizeRange(cellRange);
+    const rowSet = new Set<number>();
+    for (let r = r0; r <= r1; r++) rowSet.add(r);
+    const fieldNames = new Set<string>();
+    for (let c = c0; c <= c1; c++) {
+      const f = fields[c];
+      if (f) fieldNames.add(f.name);
+    }
+    return { fieldNames, rowSet };
+  }, [cellRange, fields]);
+  const rangeFieldRowsRef = useRef(rangeFieldRows);
+  rangeFieldRowsRef.current = rangeFieldRows;
 
   const defaultColDef = useMemo<ColDef>(() => ({
     sortable: true,
@@ -479,18 +529,34 @@ export function TableView({
           } : undefined,
           onAddColumn: () => setShowAddColumnModal(true),
         },
-        cellStyle: (params: { data: { _errFields: Set<string>; _warnFields: Set<string>; _idx: number } }) => {
+        cellStyle: (params: {
+          data: { _errFields: Set<string>; _warnFields: Set<string>; _idx: number };
+          node: { rowIndex: number | null };
+        }) => {
           const hasError = params.data._errFields?.has(f.name);
           const hasWarn = params.data._warnFields?.has(f.name);
-          if (hasError) return { border: '2px solid #e53935', background: '#fff8f8', color: 'inherit', fontStyle: 'normal' };
-          if (hasWarn) return { border: '2px solid #fdd835', background: '#fffde7', color: 'inherit', fontStyle: 'normal' };
+          const range = rangeFieldRowsRef.current;
+          const displayIdx = params.node.rowIndex;
+          const inRange = !!(range && displayIdx !== null
+            && range.fieldNames.has(f.name) && range.rowSet.has(displayIdx));
+          if (hasError) {
+            return inRange
+              ? { border: '2px solid #e53935', background: '#ffe4e4', color: 'inherit', fontStyle: 'normal' }
+              : { border: '2px solid #e53935', background: '#fff8f8', color: 'inherit', fontStyle: 'normal' };
+          }
+          if (hasWarn) {
+            return inRange
+              ? { border: '2px solid #fdd835', background: '#fff59d', color: 'inherit', fontStyle: 'normal' }
+              : { border: '2px solid #fdd835', background: '#fffde7', color: 'inherit', fontStyle: 'normal' };
+          }
           const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
           const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
           const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
+          const rangeBg = inRange ? 'rgba(25, 118, 210, 0.18)' : '';
           // 編集不可フィールドはグレー斜体
-          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: colorHex || (f.export === false ? '#f0f0f0' : '') };
-          if (f.export === false) return { border: '', background: colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
-          return { border: '', background: colorHex, color: 'inherit', fontStyle: 'normal' };
+          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: rangeBg || colorHex || (f.export === false ? '#f0f0f0' : '') };
+          if (f.export === false) return { border: '', background: rangeBg || colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
+          return { border: '', background: rangeBg || colorHex, color: 'inherit', fontStyle: 'normal' };
         },
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
@@ -541,6 +607,76 @@ export function TableView({
     if (target?.type === 'checkbox') return;
     gridRef.current?.api?.deselectAll();
   }, []);
+
+  // セル mousedown: 通常クリックなら範囲リセット＋ドラッグ起点記録、Shift+クリックなら anchor から focus を更新
+  const handleGridMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const target = e.target as Element;
+    if (!(target instanceof Element)) return;
+    // ヘッダー・行ドラッグハンドル・チェックボックス上は無視
+    if (target.closest('.ag-header')) return;
+    if (target.closest('.ag-row-drag')) return;
+    if ((target as HTMLInputElement).tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox') return;
+    // 編集中（input/textarea）は無視
+    if (target.closest('.ag-cell-inline-editing')) return;
+
+    const pos = cellPosFromTarget(target, fields);
+    if (!pos) return;
+
+    if (e.shiftKey) {
+      // 既存 range があれば anchor を維持、無ければフォーカスセルを anchor とする
+      const existing = cellRangeRef.current;
+      let anchorRow = pos.row, anchorCol = pos.col;
+      if (existing) {
+        anchorRow = existing.anchorRow;
+        anchorCol = existing.anchorCol;
+      } else {
+        const fc = gridRef.current?.api?.getFocusedCell();
+        if (fc) {
+          const colIdx = fields.findIndex((f) => f.name === fc.column.getColId());
+          if (colIdx !== -1) {
+            anchorRow = fc.rowIndex;
+            anchorCol = colIdx;
+          }
+        }
+      }
+      if (anchorRow === pos.row && anchorCol === pos.col) {
+        setCellRange(null);
+      } else {
+        setCellRange({ anchorRow, anchorCol, focusRow: pos.row, focusCol: pos.col });
+      }
+      return;
+    }
+
+    // 通常クリック: 範囲を一旦解除し、ドラッグ起点を記録
+    setCellRange(null);
+    isDraggingRef.current = true;
+    dragRangeRef.current = { anchorRow: pos.row, anchorCol: pos.col, focusRow: pos.row, focusCol: pos.col };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current || !dragRangeRef.current) return;
+      const p = cellPosFromTarget(ev.target as Element, fields);
+      if (!p) return;
+      const r = dragRangeRef.current;
+      if (r.focusRow === p.row && r.focusCol === p.col) return;
+      const next = { ...r, focusRow: p.row, focusCol: p.col };
+      dragRangeRef.current = next;
+      if (next.anchorRow !== next.focusRow || next.anchorCol !== next.focusCol) {
+        setCellRange(next);
+      } else {
+        // 元のセルに戻った場合は range をクリア
+        setCellRange(null);
+      }
+    };
+    const onUp = () => {
+      isDraggingRef.current = false;
+      dragRangeRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [fields]);
 
   const selectedFieldDef = useMemo(
     () => (selectedField ? fields.find((f) => f.name === selectedField) ?? null : null),
@@ -593,45 +729,82 @@ export function TableView({
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
     const el = e.target as HTMLInputElement;
     if ((el.tagName === 'INPUT' && el.type !== 'checkbox') || el.tagName === 'TEXTAREA') return;
-    if (!gridRef.current?.api) return;
-    if (gridRef.current.api.getEditingCells().length > 0) return;
-
-    const focusedCell = gridRef.current.api.getFocusedCell();
-    if (!focusedCell) return;
+    const api = gridRef.current?.api;
+    if (!api) return;
+    if (api.getEditingCells().length > 0) return;
 
     const text = e.clipboardData.getData('text/plain');
     if (!text) return;
 
     const pasteRows = text.split(/\r?\n/).filter((r) => r !== '');
-    const startRow = focusedCell.rowIndex;
     const pasteColCount = pasteRows[0]?.split('\t').length ?? 0;
-    // 全列分のTSV（行コピー）は列0から貼り付ける
-    const startColIdx = pasteColCount === fields.length
-      ? 0
-      : fields.findIndex((f) => f.name === focusedCell.column.getColId());
-    if (startColIdx === -1) return;
+
+    // ペースト起点と範囲を決定
+    // - 範囲選択あり: 左上を起点、範囲サイズが 1x1 の貼付データなら範囲全体にフィル
+    // - 範囲なし: フォーカスセル起点（全列分の TSV なら列 0 起点）
+    let startRow: number;
+    let startColIdx: number;
+    let fillTo: { r1: number; c1: number } | null = null;
+    if (cellRange) {
+      const { r0, r1, c0, c1 } = normalizeRange(cellRange);
+      startRow = r0;
+      startColIdx = c0;
+      if (pasteRows.length === 1 && pasteColCount === 1) {
+        fillTo = { r1, c1 };
+      }
+    } else {
+      const focusedCell = api.getFocusedCell();
+      if (!focusedCell) return;
+      startRow = focusedCell.rowIndex;
+      // 全列分のTSV（行コピー）は列0から貼り付ける
+      startColIdx = pasteColCount === fields.length
+        ? 0
+        : fields.findIndex((f) => f.name === focusedCell.column.getColId());
+      if (startColIdx === -1) return;
+    }
 
     const newRecords = [...table.records];
-    pasteRows.forEach((rowText, rowOffset) => {
-      const node = gridRef.current?.api?.getDisplayedRowAtIndex(startRow + rowOffset);
-      if (!node?.data) return;
-      const recordIdx = (node.data as { _idx: number })._idx;
-      const values = rowText.split('\t');
-      const record = { ...newRecords[recordIdx] };
-      values.forEach((val, colOffset) => {
-        const field = fields[startColIdx + colOffset];
-        if (!field || !isFieldEditable(field)) return;
-        const existing = record[field.name] as Cell | undefined;
-        const next = applyFormulaInput(val, field, existing);
-        if (next === undefined) return; // 型不一致のセルはスキップ
-        record[field.name] = next;
+
+    if (fillTo) {
+      // 1x1 を範囲全体にフィル
+      const val = pasteRows[0].split('\t')[0] ?? '';
+      for (let r = startRow; r <= fillTo.r1; r++) {
+        const node = api.getDisplayedRowAtIndex(r);
+        if (!node?.data) continue;
+        const recordIdx = (node.data as { _idx: number })._idx;
+        const record = { ...newRecords[recordIdx] };
+        for (let c = startColIdx; c <= fillTo.c1; c++) {
+          const field = fields[c];
+          if (!field || !isFieldEditable(field)) continue;
+          const existing = record[field.name] as Cell | undefined;
+          const next = applyFormulaInput(val, field, existing);
+          if (next === undefined) continue;
+          record[field.name] = next;
+        }
+        newRecords[recordIdx] = record;
+      }
+    } else {
+      pasteRows.forEach((rowText, rowOffset) => {
+        const node = api.getDisplayedRowAtIndex(startRow + rowOffset);
+        if (!node?.data) return;
+        const recordIdx = (node.data as { _idx: number })._idx;
+        const values = rowText.split('\t');
+        const record = { ...newRecords[recordIdx] };
+        values.forEach((val, colOffset) => {
+          const field = fields[startColIdx + colOffset];
+          if (!field || !isFieldEditable(field)) return;
+          const existing = record[field.name] as Cell | undefined;
+          const next = applyFormulaInput(val, field, existing);
+          if (next === undefined) return; // 型不一致のセルはスキップ
+          record[field.name] = next;
+        });
+        newRecords[recordIdx] = record;
       });
-      newRecords[recordIdx] = record;
-    });
+    }
 
     onSave({ ...table, records: newRecords });
     e.preventDefault();
-  }, [fields, table, onSave]);
+  }, [fields, table, onSave, cellRange]);
 
   // Keyboard: Ctrl+C (multi-row copy), Ctrl+D (fill-down), Ctrl+F/H (search), Delete (row)
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -648,9 +821,28 @@ export function TableView({
       return;
     }
 
-    // Ctrl+C → copy
+    // Ctrl+C → copy（優先: 範囲 > 行選択 > 単セル）
     if (mod && e.key === 'c' && !editing) {
-      // フィルタ後の可視行のうち選択されているものだけコピー
+      // 1) 矩形範囲があれば矩形 TSV
+      if (cellRange) {
+        const { r0, r1, c0, c1 } = normalizeRange(cellRange);
+        const lines: string[] = [];
+        for (let r = r0; r <= r1; r++) {
+          const node = gridRef.current.api.getDisplayedRowAtIndex(r);
+          if (!node?.data) continue;
+          const cols: string[] = [];
+          for (let c = c0; c <= c1; c++) {
+            const field = fields[c];
+            if (!field) { cols.push(''); continue; }
+            cols.push(String((node.data as MasterRecord)[field.name] ?? ''));
+          }
+          lines.push(cols.join('\t'));
+        }
+        navigator.clipboard.writeText(lines.join('\n')).catch((err) => console.warn('clipboard write failed:', err));
+        e.preventDefault();
+        return;
+      }
+      // 2) フィルタ後の可視行のうち選択されているものだけコピー
       const selectedRows: Array<{ _idx: number } & Record<string, unknown>> = [];
       gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
         if (node.isSelected() && node.data) selectedRows.push(node.data as { _idx: number } & Record<string, unknown>);
@@ -663,7 +855,7 @@ export function TableView({
         e.preventDefault();
         return;
       }
-      // チェック選択なし → フォーカスセルの値のみコピー
+      // 3) チェック選択なし → フォーカスセルの値のみコピー
       const fc = gridRef.current.api.getFocusedCell();
       if (!fc) return;
       const row = gridRef.current.api.getDisplayedRowAtIndex(fc.rowIndex);
@@ -706,8 +898,50 @@ export function TableView({
       e.preventDefault();
     }
 
-    // Delete → delete selected row
+    // Delete → 範囲があれば矩形クリア（値のみ、color/comment は維持）、無ければ選択行削除
     if (e.key === 'Delete' && !editing) {
+      if (cellRange) {
+        const { r0, r1, c0, c1 } = normalizeRange(cellRange);
+        const targetRecordIdxs: number[] = [];
+        for (let r = r0; r <= r1; r++) {
+          const node = gridRef.current.api.getDisplayedRowAtIndex(r);
+          if (!node?.data) continue;
+          targetRecordIdxs.push((node.data as { _idx: number })._idx);
+        }
+        const targetSet = new Set(targetRecordIdxs);
+        const targetFields: FieldDef[] = [];
+        for (let c = c0; c <= c1; c++) {
+          const f = fields[c];
+          if (f && isFieldEditable(f)) targetFields.push(f);
+        }
+        if (targetFields.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const newRecords = table.records.map((r, i) => {
+          if (!targetSet.has(i)) return r;
+          const next = { ...r };
+          for (const f of targetFields) {
+            const existing = next[f.name] as Cell | undefined;
+            if (existing === undefined) continue;
+            if (isRichCell(existing as Cell)) {
+              // RichCell は value/override のみクリアし color/comment は残す
+              const rich = existing as RichCell;
+              if (rich.color !== undefined || rich.comment !== undefined) {
+                next[f.name] = { color: rich.color, comment: rich.comment };
+              } else {
+                delete next[f.name];
+              }
+            } else {
+              delete next[f.name];
+            }
+          }
+          return next;
+        });
+        onSave({ ...table, records: newRecords });
+        e.preventDefault();
+        return;
+      }
       if (selectedRow !== null) {
         onDeleteRow(selectedRow);
         setSelectedRow(null);
@@ -715,7 +949,7 @@ export function TableView({
         e.preventDefault();
       }
     }
-  }, [selectedRow, onDeleteRow, fields, table, onSave]);
+  }, [selectedRow, onDeleteRow, fields, table, onSave, cellRange]);
 
   const updateCellRich = useCallback((rowIdx: number, fieldName: string, patch: Partial<RichCell>) => {
     const newRecords = table.records.map((r, i) => {
@@ -938,6 +1172,11 @@ export function TableView({
     gridRef.current?.api?.refreshCells({ force: true });
   }, [validation]);
 
+  // 範囲選択の変化を cellStyle に反映
+  useEffect(() => {
+    gridRef.current?.api?.refreshCells({ force: true });
+  }, [cellRange]);
+
   // Table-level validation errors (recordIndex === -1)
   const tableErrors = validation?.errors.filter((e) => e.recordIndex === -1) ?? [];
   const recordErrors = validation?.errors.filter((e) => e.recordIndex >= 0) ?? [];
@@ -949,6 +1188,7 @@ export function TableView({
         style={{ ...styles.grid, position: 'relative' }}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
+        onMouseDown={handleGridMouseDown}
       >
         <AgGridReact
           ref={gridRef}
@@ -972,6 +1212,12 @@ export function TableView({
           onFilterChanged={() => {
             const model = gridRef.current?.api?.getFilterModel();
             setFilterActive(!!model && Object.keys(model).length > 0);
+            // 表示インデックスが変わるため範囲を解除
+            setCellRange(null);
+          }}
+          onSortChanged={() => {
+            // 表示インデックスが変わるため範囲を解除
+            setCellRange(null);
           }}
         />
         {filterActive && (
