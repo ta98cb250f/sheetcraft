@@ -1,15 +1,18 @@
-import type { Cell, RichCell, CellColorsConfig } from '@sheetcraft/core';
+import type { Cell, RichCell, SimpleCell, CellColorsConfig } from '@sheetcraft/core';
 import { isRichCell } from '@sheetcraft/core';
 
 type Props = {
   fieldName: string | null;
   cell: Cell | null;
+  // 実際にレコードに保存されている値。cell は formula 算出後の表示値の可能性があるため、
+  // 編集時に保持すべき元データの判定には rawCell を使う。
+  rawCell?: Cell | Cell[] | undefined;
   cellColors: CellColorsConfig | null;
   onUpdate: (cell: Cell) => void;
   readonly?: boolean;
 };
 
-export function CellDetailPanel({ fieldName, cell, cellColors, onUpdate, readonly = false }: Props) {
+export function CellDetailPanel({ fieldName, cell, rawCell, cellColors, onUpdate, readonly = false }: Props) {
   if (!fieldName || cell === null) {
     return (
       <div style={styles.panel}>
@@ -18,15 +21,31 @@ export function CellDetailPanel({ fieldName, cell, cellColors, onUpdate, readonl
     );
   }
 
-  const rich = isRichCell(cell) ? (cell as RichCell) : null;
+  // rich/color/comment は実際の保存値 (rawCell) から導出する
+  const rawIsRich = rawCell !== undefined && !Array.isArray(rawCell) && isRichCell(rawCell);
+  const rich = rawIsRich ? (rawCell as RichCell) : null;
   const value = rich ? rich.value : cell;
   const color = rich?.color ?? '';
   const comment = rich?.comment ?? '';
 
-  const makeRich = (patch: Partial<RichCell>): RichCell => ({
-    ...(rich ?? {}),
-    ...patch,
-  });
+  const makeRich = (patch: Partial<RichCell>): RichCell => {
+    if (rich) {
+      // 既存 rich の value が "" の場合は「実質空」として扱い、value を落として formula を再評価可能にする
+      const base: RichCell = rich.value === '' ? { ...rich, value: undefined } : rich;
+      return { ...base, ...patch };
+    }
+    // rawCell が SimpleCell（保存済みの値）なら value として保持。
+    // ただし undefined / "" は「空セル」とみなし value に含めない（formula を引き続き有効にするため）。
+    if (
+      rawCell !== undefined &&
+      rawCell !== '' &&
+      !Array.isArray(rawCell) &&
+      !isRichCell(rawCell)
+    ) {
+      return { value: rawCell as SimpleCell, ...patch };
+    }
+    return { ...patch };
+  };
 
   const cleanRich = (r: RichCell): Cell => {
     if (!r.color && !r.comment && r.override === undefined) {
