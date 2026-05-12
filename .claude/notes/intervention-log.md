@@ -20,6 +20,14 @@
 
 ## ログ
 
+### 2026-05-13 — PR #7（pr-metadata スキル配置修正）
+
+- [指示違反] `.claude/plugins/pr-metadata/` の配置を `settings.json` のマーケットプレイス登録だけ見て「正しい」と即答 → ユーザーから「.claude/skills じゃなかった？」と訂正され、claude-code-guide 経由で公式ドキュメントを参照して初めて誤りを認識 → 配置規約系は推測で断定せず最初に公式仕様を確認する
+- [プロセス] 新ブランチでコミットに着手する直前、untracked の `packages/gui/.vite/` を ignore 対象として点検せず、ユーザーから「ignore したほうがいいものが乗っているか」と問われて初めて確認 → ブランチ切り直後 / コミット前に `git status` の untracked を毎回点検する
+- [バグ] pr-metadata スキルに書いた `gh milestone list` が `gh` に存在しないサブコマンドだった（PR #5 で導入した初版から残存、`gh api repos/.../milestones` が正しい）→ スキルに記載するコマンドは導入時に必ず一度実行確認する
+- [プロセス] 新ブランチを develop からではなく古い feature ブランチ (`claude/review-implement-tasks-1QGJD`) のまま分岐させ、develop に既に入っていた SKILL.md 変更とリベース時にコンフリクト → 新ブランチは `git fetch && git checkout -b <name> origin/<default-branch>` で最新の base から切る
+- [指示違反] PR 作成時に pr-metadata スキルを起動せず `gh pr create` を直接実行（Skill ツール経由の呼び出しは "Unknown skill" で失敗したまま手動でメタデータ適用）→ スキル起動が失敗した時点でユーザーに状況を伝え、手動代替するか中断するかを確認する
+
 ### 2026-05-12 — PR #13（範囲選択 1-6 + 関連バグ）
 
 #### 指示違反・プロセス
