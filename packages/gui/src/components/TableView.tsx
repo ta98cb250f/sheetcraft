@@ -378,6 +378,12 @@ export function TableView({
   const isDraggingRef = useRef(false);
   const cellRangeRef = useRef<CellRange | null>(null);
   cellRangeRef.current = cellRange;
+  // capture-phase keydown ハンドラで参照する最新値
+  const selectedRowRef = useRef(selectedRow);
+  selectedRowRef.current = selectedRow;
+  const onDeleteRowRef = useRef(onDeleteRow);
+  onDeleteRowRef.current = onDeleteRow;
+  const gridContainerRef = useRef<HTMLDivElement>(null);
 
   const fieldEditTargetDef = useMemo(
     () => fieldEditTarget ? (table.fields.find((f) => f.name === fieldEditTarget) ?? null) : null,
@@ -396,6 +402,8 @@ export function TableView({
   const fields = useMemo(() => {
     return baseFields ? resolveFields(table.fields, baseFields) : table.fields;
   }, [table.fields, baseFields]);
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
 
   const rowData = useMemo(() => {
     return table.records.map((record, idx) => {
@@ -811,7 +819,8 @@ export function TableView({
     e.preventDefault();
   }, [fields, table, onSave, cellRange]);
 
-  // Keyboard: Ctrl+C (multi-row copy), Ctrl+D (fill-down), Ctrl+F/H (search), Delete (row)
+  // Keyboard: Ctrl+C (copy), Ctrl+D (fill-down), Ctrl+F/H (search)
+  // Delete/Backspace は capture-phase の useEffect で処理（AG Grid のデフォルトを奪うため）
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     const el = e.target as HTMLInputElement;
     if ((el.tagName === 'INPUT' && el.type !== 'checkbox') || el.tagName === 'TEXTAREA') return;
@@ -902,59 +911,7 @@ export function TableView({
       onSave({ ...table, records: newRecords });
       e.preventDefault();
     }
-
-    // Delete → 範囲があれば矩形クリア（値のみ、color/comment は維持）、無ければ選択行削除
-    if (e.key === 'Delete' && !editing) {
-      if (cellRange) {
-        const { r0, r1, c0, c1 } = normalizeRange(cellRange);
-        const targetRecordIdxs: number[] = [];
-        for (let r = r0; r <= r1; r++) {
-          const node = gridRef.current.api.getDisplayedRowAtIndex(r);
-          if (!node?.data) continue;
-          targetRecordIdxs.push((node.data as { _idx: number })._idx);
-        }
-        const targetSet = new Set(targetRecordIdxs);
-        const targetFields: FieldDef[] = [];
-        for (let c = c0; c <= c1; c++) {
-          const f = fields[c];
-          if (f && isFieldEditable(f)) targetFields.push(f);
-        }
-        if (targetFields.length === 0) {
-          e.preventDefault();
-          return;
-        }
-        const newRecords = table.records.map((r, i) => {
-          if (!targetSet.has(i)) return r;
-          const next = { ...r };
-          for (const f of targetFields) {
-            const existing = next[f.name] as Cell | undefined;
-            if (existing === undefined) continue;
-            if (isRichCell(existing as Cell)) {
-              // RichCell は value/override のみクリアし color/comment は残す
-              const rich = existing as RichCell;
-              if (rich.color !== undefined || rich.comment !== undefined) {
-                next[f.name] = { color: rich.color, comment: rich.comment };
-              } else {
-                delete next[f.name];
-              }
-            } else {
-              delete next[f.name];
-            }
-          }
-          return next;
-        });
-        onSave({ ...table, records: newRecords });
-        e.preventDefault();
-        return;
-      }
-      if (selectedRow !== null) {
-        onDeleteRow(selectedRow);
-        setSelectedRow(null);
-        setSelectedField(null);
-        e.preventDefault();
-      }
-    }
-  }, [selectedRow, onDeleteRow, fields, table, onSave, cellRange]);
+  }, [fields, table, onSave, cellRange]);
 
   const updateCellRich = useCallback((rowIdx: number, fieldName: string, patch: Partial<RichCell>) => {
     const newRecords = table.records.map((r, i) => {
@@ -1172,6 +1129,77 @@ export function TableView({
     [table, fields, onSave]
   );
 
+  // Delete / Backspace をキャプチャフェーズで奪う
+  // AG Grid のセルレベル keydown が先に走ると、デフォルト動作（編集モードを空入力で開始）でフォーカスセルだけクリアされてしまうため、
+  // grid root にキャプチャフェーズの native listener を付けて先回りする。
+  // Mac の「delete」キーは Backspace を送出するため両方を扱う。
+  useEffect(() => {
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement;
+      if ((target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'checkbox') || target.tagName === 'TEXTAREA') return;
+      const api = gridRef.current?.api;
+      if (!api) return;
+      if (api.getEditingCells().length > 0) return;
+
+      const range = cellRangeRef.current;
+      if (range) {
+        e.preventDefault();
+        e.stopPropagation();
+        const { r0, r1, c0, c1 } = normalizeRange(range);
+        const currentTable = tableRef.current;
+        const currentFields = fieldsRef.current;
+        const targetRecordIdxs: number[] = [];
+        for (let r = r0; r <= r1; r++) {
+          const node = api.getDisplayedRowAtIndex(r);
+          if (!node?.data) continue;
+          targetRecordIdxs.push((node.data as { _idx: number })._idx);
+        }
+        const targetSet = new Set(targetRecordIdxs);
+        const targetFields: FieldDef[] = [];
+        for (let c = c0; c <= c1; c++) {
+          const f = currentFields[c];
+          if (f && isFieldEditable(f)) targetFields.push(f);
+        }
+        if (targetFields.length === 0) return;
+        const newRecords = currentTable.records.map((r, i) => {
+          if (!targetSet.has(i)) return r;
+          const next = { ...r };
+          for (const f of targetFields) {
+            const existing = next[f.name] as Cell | undefined;
+            if (existing === undefined) continue;
+            if (isRichCell(existing as Cell)) {
+              const rich = existing as RichCell;
+              if (rich.color !== undefined || rich.comment !== undefined) {
+                next[f.name] = { color: rich.color, comment: rich.comment };
+              } else {
+                delete next[f.name];
+              }
+            } else {
+              delete next[f.name];
+            }
+          }
+          return next;
+        });
+        onSaveRef.current({ ...currentTable, records: newRecords });
+        return;
+      }
+
+      // 範囲なし: Delete のみ行削除（Backspace は AG Grid の編集開始に任せる）
+      if (e.key === 'Delete' && selectedRowRef.current !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        onDeleteRowRef.current(selectedRowRef.current);
+        setSelectedRow(null);
+        setSelectedField(null);
+      }
+    };
+    el.addEventListener('keydown', handler, true); // capture phase
+    return () => el.removeEventListener('keydown', handler, true);
+  }, []);
+
   // validation 変化時に cellStyle を強制再評価（_errFields はrow dataに含まれるが cellStyle は値変化がないと再呼されない）
   useEffect(() => {
     gridRef.current?.api?.refreshCells({ force: true });
@@ -1189,6 +1217,7 @@ export function TableView({
   return (
     <div style={styles.container}>
       <div
+        ref={gridContainerRef}
         className="ag-theme-alpine"
         style={{ ...styles.grid, position: 'relative' }}
         onKeyDown={handleKeyDown}
