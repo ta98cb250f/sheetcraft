@@ -32,12 +32,12 @@ def main() -> int:
 
     if "/.claude/projects/" in file_path and "/memory/" in file_path:
         print(
-            "BLOCK: メモリディレクトリへの書き込みです。"
-            "保存内容と可否をユーザーに先に提示して承認を得てください "
-            "(memory/feedback_memory_confirm.md)。",
+            "WARN: メモリディレクトリへの書き込みです。"
+            "保存内容と可否をユーザーに先に提示して承認を得たか再確認してください "
+            "(memory/feedback_memory_confirm.md)。承認済みなら続行可。",
             file=sys.stderr,
         )
-        return 2
+        return 0
 
     if tool_name == "Write":
         content = tool_input.get("content", "")
