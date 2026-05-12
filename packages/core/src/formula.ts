@@ -417,8 +417,8 @@ export function computeRecord(
     const cell = record[field.name];
 
     // 優先順: セル値 > セルの = 式（override） > 列の formula
-    // null と undefined はどちらも「未設定」として同等に扱う
-    if (cell === undefined || cell === null) {
+    // null / undefined / 空文字 "" はいずれも「未設定」として同等に扱い formula にフォールバックする
+    if (cell === undefined || cell === null || cell === '') {
       if (field.formula) {
         const v = evalFormula(field.formula, field.name);
         if (v !== undefined) result[field.name] = v;
@@ -427,7 +427,8 @@ export function computeRecord(
     }
     if (isRichCell(cell as Cell)) {
       const rich = cell as import('./types.js').RichCell;
-      if (rich.value !== undefined) { result[field.name] = rich.value; continue; }
+      // value === '' も「未設定」扱い
+      if (rich.value !== undefined && rich.value !== '') { result[field.name] = rich.value; continue; }
       if (rich.override) {
         const v = evalFormula(rich.override, field.name);
         if (v !== undefined) result[field.name] = v;

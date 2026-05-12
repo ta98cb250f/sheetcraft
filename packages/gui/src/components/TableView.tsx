@@ -378,6 +378,8 @@ export function TableView({
   const isDraggingRef = useRef(false);
   const cellRangeRef = useRef<CellRange | null>(null);
   cellRangeRef.current = cellRange;
+  // 直前に通常クリックしたセル位置。Shift+クリックで anchor として使う（AG Grid の focus 状態に依存しないため）
+  const lastClickedCellRef = useRef<{ row: number; col: number } | null>(null);
   // capture-phase keydown ハンドラで参照する最新値
   const selectedRowRef = useRef(selectedRow);
   selectedRowRef.current = selectedRow;
@@ -637,31 +639,22 @@ export function TableView({
     if (!pos) return;
 
     if (e.shiftKey) {
-      // 既存 range があれば anchor を維持、無ければフォーカスセルを anchor とする
+      // 既存 range があれば anchor を維持、無ければ直前クリックの位置を anchor とする
+      // （AG Grid の focus は AG Grid の mousedown で既にクリック先に移っているため getFocusedCell は使えない）
       const existing = cellRangeRef.current;
-      let anchorRow = pos.row, anchorCol = pos.col;
-      if (existing) {
-        anchorRow = existing.anchorRow;
-        anchorCol = existing.anchorCol;
-      } else {
-        const fc = gridRef.current?.api?.getFocusedCell();
-        if (fc) {
-          const colIdx = fields.findIndex((f) => f.name === fc.column.getColId());
-          if (colIdx !== -1) {
-            anchorRow = fc.rowIndex;
-            anchorCol = colIdx;
-          }
-        }
-      }
-      if (anchorRow === pos.row && anchorCol === pos.col) {
+      const anchor = existing
+        ? { row: existing.anchorRow, col: existing.anchorCol }
+        : lastClickedCellRef.current ?? pos;
+      if (anchor.row === pos.row && anchor.col === pos.col) {
         setCellRange(null);
       } else {
-        setCellRange({ anchorRow, anchorCol, focusRow: pos.row, focusCol: pos.col });
+        setCellRange({ anchorRow: anchor.row, anchorCol: anchor.col, focusRow: pos.row, focusCol: pos.col });
       }
       return;
     }
 
-    // 通常クリック: 範囲を一旦解除し、ドラッグ起点を記録
+    // 通常クリック: 範囲を一旦解除し、ドラッグ起点と「直前クリック位置」を記録
+    lastClickedCellRef.current = pos;
     setCellRange(null);
     isDraggingRef.current = true;
     dragRangeRef.current = { anchorRow: pos.row, anchorCol: pos.col, focusRow: pos.row, focusCol: pos.col };
@@ -695,6 +688,11 @@ export function TableView({
     () => (selectedField ? fields.find((f) => f.name === selectedField) ?? null : null),
     [selectedField, fields]
   );
+
+  const selectedRawCell = useMemo<Cell | Cell[] | undefined>(() => {
+    if (selectedRow === null || !selectedField) return undefined;
+    return table.records[selectedRow]?.[selectedField];
+  }, [selectedRow, selectedField, table.records]);
 
   const selectedCell = useMemo<Cell | null>(() => {
     if (selectedRow === null || !selectedField) return null;
@@ -1307,6 +1305,7 @@ export function TableView({
       <CellDetailPanel
         fieldName={selectedField}
         cell={selectedCell}
+        rawCell={selectedRawCell}
         cellColors={cellColors}
         onUpdate={handleCellUpdate}
         readonly={!selectedFieldDef || !isFieldEditable(selectedFieldDef)}
