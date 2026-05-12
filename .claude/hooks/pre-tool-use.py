@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""PreToolUse hook — 介入ログから抽出した再発パターンを検出してブロックする。
+"""PreToolUse hook — 介入ログから抽出した再発パターンを検出する。
 
-検出対象:
+検出対象と挙動:
   1. メモリディレクトリ (~/.claude/projects/*/memory/) への Write / Edit
-     → ユーザー事前確認なしの書き込みを阻止 (feedback_memory_confirm.md)
+     → exit 0 + stderr WARN (ユーザー承認後の正規パスを通すため非ブロック、
+        承認状態は Claude が判断する)
   2. Write で空ファイル (content が空 or 空白のみ)
-     → 「追加候補ゼロなのに空 settings.json 作成」事例の再発防止
+     → exit 2 BLOCK (「追加候補ゼロなのに空 settings.json 作成」事例の再発防止)
   3. Edit で replace_all=true かつ old_string が短い (30 文字未満)
-     → 前方一致衝突による二重置換 (「コミュニケーションニケーション」事例) 防止
+     → exit 2 BLOCK (前方一致衝突による二重置換、「コミュニケーションニケーション」事例)
 
-exit 2 でツール実行をブロックし、stderr の内容を Claude に伝える。
+exit 2 のとき: stderr の内容を Claude に伝えてツール実行を阻止する。
+exit 0 のとき: stderr 内容を表示しつつツール実行を継続する。
 """
 import json
 import sys

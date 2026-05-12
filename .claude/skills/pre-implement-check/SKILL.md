@@ -11,7 +11,7 @@ version: 1.0.0
 ## 使い方
 
 ```bash
-cd /Users/yoshinotakuya/Documents/GitHub/sheetcraft
+cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 
 echo "=== 1. ブランチ状態 ==="
 echo "現在ブランチ: $(git rev-parse --abbrev-ref HEAD)"
