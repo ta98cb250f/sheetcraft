@@ -87,6 +87,25 @@ function isVersionField(field: FieldDef): boolean {
   return field.auto === 'timestamp_version' || field.name === 'version';
 }
 
+const RANGE_HEX = '#1976d2';
+const RANGE_BG_NO_FILL = 'rgba(25, 118, 210, 0.18)';
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = hex.replace('#', '').match(/^([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/);
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function mixHex(a: string, b: string): string {
+  const ra = hexToRgb(a);
+  const rb = hexToRgb(b);
+  if (!ra || !rb) return a || b;
+  const out = [0, 1, 2].map((i) => Math.round((ra[i] + rb[i]) / 2));
+  return '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
 // セル編集時、その行の _formulas にこの列の式があれば「=式」を初期値とするテキストエディタ
 type FormulaAwareEditorProps = {
   value?: unknown;
@@ -572,11 +591,14 @@ export function TableView({
           const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
           const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
           const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
-          const rangeBg = inRange ? 'rgba(25, 118, 210, 0.18)' : '';
+          // 範囲ハイライト: 塗り色あり → 塗り色と範囲色の RGB 平均 / 塗り色なし → 半透明青
+          const bg = inRange
+            ? (colorHex ? mixHex(colorHex, RANGE_HEX) : RANGE_BG_NO_FILL)
+            : colorHex;
           // 編集不可フィールドはグレー斜体
-          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: rangeBg || colorHex || (f.export === false ? '#f0f0f0' : '') };
-          if (f.export === false) return { border: '', background: rangeBg || colorHex || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
-          return { border: '', background: rangeBg || colorHex, color: 'inherit', fontStyle: 'normal' };
+          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: bg || (f.export === false ? '#f0f0f0' : '') };
+          if (f.export === false) return { border: '', background: bg || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
+          return { border: '', background: bg, color: 'inherit', fontStyle: 'normal' };
         },
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
@@ -925,6 +947,58 @@ export function TableView({
     onSave({ ...table, records: newRecords });
   }, [table, onSave]);
 
+  // 範囲があれば範囲全セルに、なければ単セルに RichCell.color を適用（Delete / Ctrl+C と同じ優先順位）
+  // 範囲 ∋ 右クリック先 → 範囲全セルに着色 / それ以外 → 右クリック先セル単体に着色
+  const applyCellColor = useCallback((key: string, clickedRowIdx: number | null, clickedFieldName: string | null) => {
+    const api = gridRef.current?.api;
+    const range = cellRangeRef.current;
+    const currentFields = fieldsRef.current;
+    let useRange = false;
+    if (api && range && clickedRowIdx !== null && clickedFieldName !== null) {
+      const { r0, r1, c0, c1 } = normalizeRange(range);
+      const clickedColIdx = currentFields.findIndex((f) => f.name === clickedFieldName);
+      if (clickedColIdx >= c0 && clickedColIdx <= c1) {
+        for (let r = r0; r <= r1; r++) {
+          const node = api.getDisplayedRowAtIndex(r);
+          if (node?.data && (node.data as { _idx: number })._idx === clickedRowIdx) {
+            useRange = true;
+            break;
+          }
+        }
+      }
+    }
+    if (useRange && api && range) {
+      const { r0, r1, c0, c1 } = normalizeRange(range);
+      const currentTable = tableRef.current;
+      const targetSet = new Set<number>();
+      for (let r = r0; r <= r1; r++) {
+        const node = api.getDisplayedRowAtIndex(r);
+        if (!node?.data) continue;
+        targetSet.add((node.data as { _idx: number })._idx);
+      }
+      const targetFieldNames: string[] = [];
+      for (let c = c0; c <= c1; c++) {
+        const f = currentFields[c];
+        if (f) targetFieldNames.push(f.name);
+      }
+      if (targetSet.size === 0 || targetFieldNames.length === 0) return;
+      const newRecords = currentTable.records.map((r, i) => {
+        if (!targetSet.has(i)) return r;
+        const next = { ...r };
+        for (const name of targetFieldNames) {
+          const existing = next[name] as Cell | undefined;
+          next[name] = toRichCell(existing, { color: key });
+        }
+        return next;
+      });
+      onSaveRef.current({ ...currentTable, records: newRecords });
+      return;
+    }
+    if (clickedRowIdx !== null && clickedFieldName !== null) {
+      updateCellRich(clickedRowIdx, clickedFieldName, { color: key });
+    }
+  }, [updateCellRich]);
+
   // Right-click context menu (cell)
   const onCellContextMenu = useCallback((e: CellContextMenuEvent) => {
     (e.event as MouseEvent)?.preventDefault();
@@ -948,7 +1022,7 @@ export function TableView({
           label: `<span style="display:inline-block;width:12px;height:12px;background:${def.hex};border:1px solid #999;border-radius:2px;margin-right:6px;vertical-align:middle"></span>${def.label ?? key}`,
           html: true,
           action: () => {
-            if (rowIdx !== null && fieldName) updateCellRich(rowIdx, fieldName, { color: key });
+            applyCellColor(key, rowIdx, fieldName);
           },
         }))
       : [];
@@ -1047,7 +1121,7 @@ export function TableView({
         : []),
     ];
     return items;
-  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table, onSave, updateCellRich]);
+  }, [contextMenu, fields, pinnedColumns, cellColors, onAddRow, onDeleteRow, table, onSave, updateCellRich, applyCellColor]);
 
   // 列移動: AG Grid の表示順を table.fields の順序に反映（base_fields は移動不可なので無視）
   const onColumnMoved = useCallback((e: ColumnMovedEvent) => {
