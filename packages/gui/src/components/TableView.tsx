@@ -486,27 +486,32 @@ export function TableView({
         const hasFormula = isRichCell(raw as Cell) && !!(raw as RichCell).override;
         const val = String(params.value ?? '');
         if (!hasComment && !hasFormula) return val;
+        // overlay は .ag-cell（仮想化のため position: absolute）を positioning context として
+        // セル padding の外側まで覆う。これによりマーカーが真のセル角に揃う。
         return (
-          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            {hasComment && (
-              <div style={{
-                position: 'absolute', top: 0, right: 0,
-                width: 0, height: 0, borderStyle: 'solid',
-                borderWidth: '0 7px 7px 0',
-                borderColor: 'transparent #f57c00 transparent transparent',
-              }} title={(raw as RichCell).comment ?? ''} />
-            )}
-            {hasFormula && (
-              <div style={{
-                position: 'absolute', bottom: 1, right: 2,
-                fontSize: 9, color: '#1a73e8', fontWeight: 700, lineHeight: 1,
-                pointerEvents: 'none', userSelect: 'none',
-              }} title={`式: =${(raw as RichCell).override}`}>
-                fx
-              </div>
-            )}
+          <>
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+              {hasComment && (
+                <div style={{
+                  position: 'absolute', top: 0, right: 0,
+                  width: 0, height: 0, borderStyle: 'solid',
+                  borderWidth: '0 7px 7px 0',
+                  borderColor: 'transparent #f57c00 transparent transparent',
+                  pointerEvents: 'auto',
+                }} title={(raw as RichCell).comment ?? ''} />
+              )}
+              {hasFormula && (
+                <div style={{
+                  position: 'absolute', bottom: 1, right: 2,
+                  fontSize: 9, color: '#1a73e8', fontWeight: 700, lineHeight: 1,
+                  userSelect: 'none',
+                }} title={`式: =${(raw as RichCell).override}`}>
+                  fx
+                </div>
+              )}
+            </div>
             {val}
-          </div>
+          </>
         );
       };
 
