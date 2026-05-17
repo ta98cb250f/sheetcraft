@@ -596,11 +596,10 @@ export function TableView({
           const bg = inRange
             ? (colorHex ? multiplyHex(colorHex, RANGE_HEX) : RANGE_BG_NO_FILL)
             : colorHex;
-          const rangeBorder = inRange ? `2px solid ${RANGE_HEX}` : '';
           // 編集不可フィールドはグレー斜体
-          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: rangeBorder, background: bg || (f.export === false ? '#f0f0f0' : '') };
-          if (f.export === false) return { border: rangeBorder, background: bg || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
-          return { border: rangeBorder, background: bg, color: 'inherit', fontStyle: 'normal' };
+          if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: bg || (f.export === false ? '#f0f0f0' : '') };
+          if (f.export === false) return { border: '', background: bg || '#f0f0f0', color: 'inherit', fontStyle: 'normal' };
+          return { border: '', background: bg, color: 'inherit', fontStyle: 'normal' };
         },
         ...(isVersionField(f) ? { comparator: versionComparator } : {}),
       };
@@ -950,13 +949,28 @@ export function TableView({
   }, [table, onSave]);
 
   // 範囲があれば範囲全セルに、なければ単セルに RichCell.color を適用（Delete / Ctrl+C と同じ優先順位）
-  const applyCellColor = useCallback((key: string, fallbackRowIdx: number | null, fallbackFieldName: string | null) => {
+  // 範囲 ∋ 右クリック先 → 範囲全セルに着色 / それ以外 → 右クリック先セル単体に着色
+  const applyCellColor = useCallback((key: string, clickedRowIdx: number | null, clickedFieldName: string | null) => {
     const api = gridRef.current?.api;
     const range = cellRangeRef.current;
-    if (api && range) {
+    const currentFields = fieldsRef.current;
+    let useRange = false;
+    if (api && range && clickedRowIdx !== null && clickedFieldName !== null) {
+      const { r0, r1, c0, c1 } = normalizeRange(range);
+      const clickedColIdx = currentFields.findIndex((f) => f.name === clickedFieldName);
+      if (clickedColIdx >= c0 && clickedColIdx <= c1) {
+        for (let r = r0; r <= r1; r++) {
+          const node = api.getDisplayedRowAtIndex(r);
+          if (node?.data && (node.data as { _idx: number })._idx === clickedRowIdx) {
+            useRange = true;
+            break;
+          }
+        }
+      }
+    }
+    if (useRange && api && range) {
       const { r0, r1, c0, c1 } = normalizeRange(range);
       const currentTable = tableRef.current;
-      const currentFields = fieldsRef.current;
       const targetSet = new Set<number>();
       for (let r = r0; r <= r1; r++) {
         const node = api.getDisplayedRowAtIndex(r);
@@ -981,8 +995,8 @@ export function TableView({
       onSaveRef.current({ ...currentTable, records: newRecords });
       return;
     }
-    if (fallbackRowIdx !== null && fallbackFieldName !== null) {
-      updateCellRich(fallbackRowIdx, fallbackFieldName, { color: key });
+    if (clickedRowIdx !== null && clickedFieldName !== null) {
+      updateCellRich(clickedRowIdx, clickedFieldName, { color: key });
     }
   }, [updateCellRich]);
 
