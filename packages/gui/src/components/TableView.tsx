@@ -87,7 +87,6 @@ function isVersionField(field: FieldDef): boolean {
   return field.auto === 'timestamp_version' || field.name === 'version';
 }
 
-// 範囲選択ハイライトの基調色。塗り色との乗算合成 / 枠線 / 塗り色なしセル背景に共用。
 const RANGE_HEX = '#1976d2';
 const RANGE_BG_NO_FILL = 'rgba(25, 118, 210, 0.18)';
 
@@ -99,11 +98,11 @@ function hexToRgb(hex: string): [number, number, number] | null {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
-function multiplyHex(a: string, b: string): string {
+function mixHex(a: string, b: string): string {
   const ra = hexToRgb(a);
   const rb = hexToRgb(b);
   if (!ra || !rb) return a || b;
-  const out = [0, 1, 2].map((i) => Math.round((ra[i] * rb[i]) / 255));
+  const out = [0, 1, 2].map((i) => Math.round((ra[i] + rb[i]) / 2));
   return '#' + out.map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 
@@ -592,9 +591,9 @@ export function TableView({
           const raw = tableRecordsRef.current[params.data._idx]?.[f.name];
           const colorKey = isRichCell(raw as Cell) ? (raw as RichCell).color : undefined;
           const colorHex = colorKey && cellColors ? (cellColors.cell_colors[colorKey]?.hex ?? '') : '';
-          // 範囲ハイライト: 塗り色あり → 塗り色 × 範囲色を乗算合成 / 塗り色なし → 半透明青
+          // 範囲ハイライト: 塗り色あり → 塗り色と範囲色の RGB 平均 / 塗り色なし → 半透明青
           const bg = inRange
-            ? (colorHex ? multiplyHex(colorHex, RANGE_HEX) : RANGE_BG_NO_FILL)
+            ? (colorHex ? mixHex(colorHex, RANGE_HEX) : RANGE_BG_NO_FILL)
             : colorHex;
           // 編集不可フィールドはグレー斜体
           if (!isFieldEditable(f)) return { color: '#999', fontStyle: 'italic', border: '', background: bg || (f.export === false ? '#f0f0f0' : '') };
