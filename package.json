@@ -5,6 +5,7 @@
   "workspaces": [
     "packages/core",
     "packages/gui",
+    "packages/gui-proto",
     "packages/cli"
   ],
   "scripts": {
