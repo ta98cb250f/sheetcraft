@@ -7,7 +7,6 @@ import {
   type GridColumn,
   type Item,
   type EditableGridCell,
-  type FillPatternEventArgs,
   type HeaderClickedEventArgs,
   type CellClickedEventArgs,
   type DrawCellCallback,
@@ -17,7 +16,6 @@ import '@glideapps/glide-data-grid/dist/index.css';
 import type {
   TableFile,
   FieldDef,
-  EnumsConfig,
   CellColorsConfig,
   ValidationResult,
   Cell,
@@ -29,7 +27,6 @@ import { isRichCell, computeRecord } from '@sheetcraft/core';
 type Props = {
   table: TableFile;
   fields: FieldDef[];
-  enums: EnumsConfig | null;
   cellColors: CellColorsConfig | null;
   validation: ValidationResult | null;
   onChange: (table: TableFile) => void;
@@ -85,17 +82,14 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     [table.records, fields]
   );
 
-  const errSet = useMemo(() => {
-    const s = new Set<string>();
-    validation?.errors.forEach((e) => s.add(`${e.recordIndex}:${e.field}`));
-    return s;
-  }, [validation]);
-
-  const warnSet = useMemo(() => {
-    const s = new Set<string>();
-    validation?.warnings.forEach((w) => s.add(`${w.recordIndex}:${w.field}`));
-    return s;
-  }, [validation]);
+  const errSet = useMemo(
+    () => new Set<string>(validation?.errors.map((e) => `${e.recordIndex}:${e.field}`) ?? []),
+    [validation]
+  );
+  const warnSet = useMemo(
+    () => new Set<string>(validation?.warnings.map((w) => `${w.recordIndex}:${w.field}`) ?? []),
+    [validation]
+  );
 
   const getCellContent = useCallback((cell: Item): GridCell => {
     const [col, row] = cell;
@@ -108,11 +102,10 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     const raw = record?.[field.name];
     const computedVal = computed?.[field.name];
     const editable = isFieldEditable(field);
-    const isRich = isRichCell(raw as Cell);
-    const override = isRich ? (raw as RichCell).override : undefined;
+    const rich = isRichCell(raw as Cell) ? (raw as RichCell) : null;
 
     if (field.type === 'bool') {
-      const v = isRich ? (raw as RichCell).value : raw;
+      const v = rich ? rich.value : raw;
       return {
         kind: GridCellKind.Boolean,
         data: !!v,
@@ -122,7 +115,7 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     }
     // enum / list は Bubble ではなく Text にして編集可能にする（Bubble は read-only）
     if (field.type === 'enum') {
-      const v = isRich ? (raw as RichCell).value : raw;
+      const v = rich ? rich.value : raw;
       const text = v !== undefined && v !== null ? String(v) : '';
       return {
         kind: GridCellKind.Text,
@@ -147,7 +140,7 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     const displayStr = computedVal !== undefined && computedVal !== null
       ? Array.isArray(computedVal) ? computedVal.join(', ') : String(computedVal)
       : '';
-    const editText = override ? `=${override}` : displayStr;
+    const editText = rich?.override ? `=${rich.override}` : displayStr;
     return {
       kind: GridCellKind.Text,
       data: editText,
@@ -156,6 +149,12 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
       readonly: !editable,
     };
   }, [fields, table.records, computedRecords]);
+
+  // 単一セル更新の基本経路。onCellEdited / 右クリックメニュー双方から使う。
+  const updateCell = useCallback((row: number, fieldName: string, next: Cell | Cell[] | undefined) => {
+    const newRecords = table.records.map((r, i) => (i === row ? { ...r, [fieldName]: next } : r));
+    onChange({ ...table, records: newRecords });
+  }, [table, onChange]);
 
   const onCellEdited = useCallback((cell: Item, newValue: EditableGridCell) => {
     const [col, row] = cell;
@@ -179,9 +178,8 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
       return;
     }
     if (next === undefined) return;
-    const newRecords = table.records.map((r, i) => (i === row ? { ...r, [field.name]: next } : r));
-    onChange({ ...table, records: newRecords });
-  }, [fields, table, onChange]);
+    updateCell(row, field.name, next);
+  }, [fields, table.records, updateCell]);
 
   // 範囲コピー / ペースト / Delete の値取得経路。
   // `true` (リテラル) を渡す基本実装が機能しないケースがあるため、関数で明示する。
@@ -253,27 +251,16 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     return false;
   }, [fields, table, onChange]);
 
-  const onFillPattern = useCallback((e: FillPatternEventArgs) => {
-    // Glide Data Grid v6 は onCellEdited をフィル範囲分呼び出すので、
-    // 追加処理は不要。ここではトレース用。
-    console.log('[proto] onFillPattern', e.fillDestination, e.patternSource);
-  }, []);
-
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
-
-  const updateCell = useCallback((row: number, fieldName: string, next: Cell | undefined) => {
-    const newRecords = table.records.map((r, i) => (i === row ? { ...r, [fieldName]: next } : r));
-    onChange({ ...table, records: newRecords });
-  }, [table, onChange]);
 
   const onHeaderContextMenu = useCallback((colIdx: number, args: HeaderClickedEventArgs) => {
     args.preventDefault();
     const field = fields[colIdx];
     if (!field) return;
-    const ev = args.localEventX !== undefined ? args : null;
-    // ブラウザの bounds を直接取れないので bounds + event の座標を合成
-    const x = (args.bounds?.x ?? 0) + (ev?.localEventX ?? 0);
-    const y = (args.bounds?.y ?? 0) + (ev?.localEventY ?? 0);
+    // bounds はキャンバス上のセル/ヘッダー矩形、localEventX/Y はその矩形内のオフセット。
+    // 両者を加算してビューポート座標を得る（プロト範囲ではこれで十分機能している）
+    const x = (args.bounds?.x ?? 0) + (args.localEventX ?? 0);
+    const y = (args.bounds?.y ?? 0) + (args.localEventY ?? 0);
     setMenu({
       x, y,
       items: [
@@ -355,7 +342,6 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     const field = fields[col];
     if (!field) { drawContent(); return; }
     const raw = table.records[row]?.[field.name] as Cell | undefined;
-    const key = `${row}:${field.name}`;
     const rich = isRichCell(raw as Cell) ? (raw as RichCell) : null;
 
     // 塗り色背景（先に塗ってから標準描画でテキストを重ねる）
@@ -369,9 +355,9 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     // 標準テキスト描画
     drawContent();
 
-    // バリデーション枠
-    const hasErr = errSet.has(key);
-    const hasWarn = warnSet.has(key);
+    // バリデーション枠（err/warn がそもそも無ければキー文字列生成もスキップ）
+    const hasErr = errSet.size > 0 && errSet.has(`${row}:${field.name}`);
+    const hasWarn = !hasErr && warnSet.size > 0 && warnSet.has(`${row}:${field.name}`);
     if (hasErr || hasWarn) {
       ctx.save();
       ctx.strokeStyle = hasErr ? '#e53935' : '#fdd835';
@@ -413,7 +399,6 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
         onCellEdited={onCellEdited}
         onPaste={onPaste}
         onDelete={onDelete}
-        onFillPattern={onFillPattern}
         onHeaderContextMenu={onHeaderContextMenu}
         onCellContextMenu={onCellContextMenu}
         drawCell={drawCell}

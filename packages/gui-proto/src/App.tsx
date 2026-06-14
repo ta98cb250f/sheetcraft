@@ -31,7 +31,10 @@ export function App() {
     setValidation(validateTable(table, { baseFields, enums }));
   }, [table, baseFields, enums]);
 
-  const fields = baseFields ? resolveFields(table.fields, baseFields) : table.fields;
+  const fields = useMemo(
+    () => (baseFields ? resolveFields(table.fields, baseFields) : table.fields),
+    [table.fields, baseFields]
+  );
   const errorCount = validation?.errors.length ?? 0;
   const warnCount = validation?.warnings.length ?? 0;
 
@@ -58,7 +61,6 @@ export function App() {
         <GlideTableView
           table={table}
           fields={fields}
-          enums={enums}
           cellColors={cellColors}
           validation={validation}
           onChange={setTable}
