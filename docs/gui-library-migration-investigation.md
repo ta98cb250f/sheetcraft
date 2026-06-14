@@ -295,7 +295,7 @@ DESIGN.md §9 と `ISSUES.md` および実装から、ユーザー操作と表�
 
 **対象ライブラリ**: Glide Data Grid（推奨案）
 
-**目的**: sheetcraft の 1 テーブル（`example/tables/character.json` 相当）を読み込み、AG Grid 版で苦労していた以下 4 操作が **Glide Data Grid の正規 API で素直に書けるか**を確認する。
+**目的**: sheetcraft の 1 テーブル（`example/master/character.json` 相当）を読み込み、AG Grid 版で苦労していた以下 4 操作が **Glide Data Grid の正規 API で素直に書けるか**を確認する。
 
 ### 5.1 検証する操作
 
@@ -312,7 +312,7 @@ DESIGN.md §9 と `ISSUES.md` および実装から、ユーザー操作と表�
 | `packages/gui-proto/package.json` | `@glideapps/glide-data-grid` 依存追加、`vite` で `:5174` で起動 | 約 20 |
 | `packages/gui-proto/index.html` | Vite エントリ | 約 10 |
 | `packages/gui-proto/src/main.tsx` | React マウント | 約 10 |
-| `packages/gui-proto/src/App.tsx` | フォルダ未対応で `example/tables/character.json` を fetch で読み込み | 約 30 |
+| `packages/gui-proto/src/App.tsx` | フォルダ未対応で `example/master/character.json` を静的 import で読み込み | 約 30 |
 | `packages/gui-proto/src/GlideTableView.tsx` | Glide Data Grid 表示・編集・範囲操作・autofill・ヘッダー右クリック・カスタム描画 | 約 150 |
 | **合計** | | **約 220 行** |
 
@@ -326,7 +326,7 @@ DESIGN.md §9 と `ISSUES.md` および実装から、ユーザー操作と表�
 
 | ポイント | 期待動作 | 検証方法 |
 |---|---|---|
-| 仮想スクロール | 100 行で fps 60、10 万行でも操作可能 | `example/tables/` に 10 万行 ダミー生成スクリプトを用意して開いて操作 |
+| 仮想スクロール | 100 行で fps 60、10 万行でも操作可能 | `example/master/` に 10 万行 ダミー生成スクリプトを用意して開いて操作 |
 | 範囲ドラッグ + autoscroll | 範囲を画面外までドラッグでスクロールする | 100 行 / 50 列のテストテーブルでドラッグ |
 | Shift+矢印で範囲拡張 | Shift+矢印で範囲が拡張される | キーボード操作 |
 | ヘッダー右クリック | コンテキストメニュー（自作 React コンポーネント）が表示される | `onHeaderContextMenu` |

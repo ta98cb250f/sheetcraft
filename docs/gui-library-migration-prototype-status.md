@@ -136,7 +136,7 @@ push 済み（origin/claude/gui-library-migration-A958A）。**PR は未作成**
 | 行削除ボタン | ✕ | ✅ | `App.tsx:149-153` |
 | 列追加モーダル | ✕ | ✅ | `AddColumnModal.tsx` |
 | 列設定モーダル（display_name / formula / validation / anomaly） | ✕ | ✅ | `FieldEditModal.tsx` |
-| 自動バリデーション（300ms debounce） | ✅ | ✅ | プロトは validateTable を直接呼ぶ |
+| 自動バリデーション | ✅（即時・debounce 無し） | ✅（300ms debounce） | プロトは `useEffect` で `validateTable` を即時同期実行（`App.tsx`）。元 GUI は編集後 300ms debounce |
 | ファイル保存（writeFile） | ✕ | ✅ | `useProject.ts:140-148` |
 
 ### 3.3 元 GUI も未実装の項目（L-NEVER、念のため）
