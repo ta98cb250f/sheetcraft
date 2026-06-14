@@ -1,4 +1,5 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { ContextMenu, type ContextMenuItem } from './ContextMenu.js';
 import {
   DataEditor,
   GridCellKind,
@@ -10,6 +11,7 @@ import {
   type HeaderClickedEventArgs,
   type CellClickedEventArgs,
   type DrawCellCallback,
+  type GridSelection,
 } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 import type {
@@ -181,21 +183,106 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     onChange({ ...table, records: newRecords });
   }, [fields, table, onChange]);
 
+  // 範囲コピー / ペースト / Delete の値取得経路。
+  // `true` (リテラル) を渡す基本実装が機能しないケースがあるため、関数で明示する。
+  const getCellsForSelection = useCallback((selection: { x: number; y: number; width: number; height: number }) => {
+    const cells: GridCell[][] = [];
+    for (let r = selection.y; r < selection.y + selection.height; r++) {
+      const row: GridCell[] = [];
+      for (let c = selection.x; c < selection.x + selection.width; c++) {
+        row.push(getCellContent([c, r]));
+      }
+      cells.push(row);
+    }
+    return cells;
+  }, [getCellContent]);
+
+  // TSV ペーストを範囲全体に展開する手動実装。
+  // false を返すと Glide のデフォルト処理（フォーカスセルへの単体貼付）を抑制する。
+  const onPaste = useCallback((target: Item, values: readonly (readonly string[])[]) => {
+    const [startCol, startRow] = target;
+    const newRecords = [...table.records];
+    values.forEach((rowVals, dr) => {
+      const recordIdx = startRow + dr;
+      if (recordIdx < 0 || recordIdx >= newRecords.length) return;
+      const record = { ...newRecords[recordIdx] };
+      rowVals.forEach((val, dc) => {
+        const colIdx = startCol + dc;
+        const field = fields[colIdx];
+        if (!field || !isFieldEditable(field)) return;
+        const existing = record[field.name] as Cell | undefined;
+        const next = applyEdit(field, existing, val);
+        if (next === undefined) return;
+        record[field.name] = next;
+      });
+      newRecords[recordIdx] = record;
+    });
+    onChange({ ...table, records: newRecords });
+    return false;
+  }, [fields, table, onChange]);
+
+  // Delete / Backspace で選択範囲全体をクリアする手動実装。
+  // 範囲セレクションがある場合はそれを優先、なければデフォルト動作（フォーカスセル）に任せる。
+  const onDelete = useCallback((selection: GridSelection) => {
+    const range = selection.current?.range;
+    if (!range) return true;
+    const newRecords = [...table.records];
+    for (let r = range.y; r < range.y + range.height; r++) {
+      if (r < 0 || r >= newRecords.length) continue;
+      const record = { ...newRecords[r] };
+      for (let c = range.x; c < range.x + range.width; c++) {
+        const field = fields[c];
+        if (!field || !isFieldEditable(field)) continue;
+        const existing = record[field.name] as Cell | undefined;
+        if (existing === undefined) continue;
+        if (isRichCell(existing as Cell)) {
+          const rich = existing as RichCell;
+          // 色 / コメントは保持、value / override のみ消す
+          if (rich.color !== undefined || rich.comment !== undefined) {
+            record[field.name] = { color: rich.color, comment: rich.comment };
+          } else {
+            delete record[field.name];
+          }
+        } else {
+          delete record[field.name];
+        }
+      }
+      newRecords[r] = record;
+    }
+    onChange({ ...table, records: newRecords });
+    return false;
+  }, [fields, table, onChange]);
+
   const onFillPattern = useCallback((e: FillPatternEventArgs) => {
     // Glide Data Grid v6 は onCellEdited をフィル範囲分呼び出すので、
     // 追加処理は不要。ここではトレース用。
     console.log('[proto] onFillPattern', e.fillDestination, e.patternSource);
   }, []);
 
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+
+  const updateCell = useCallback((row: number, fieldName: string, next: Cell | undefined) => {
+    const newRecords = table.records.map((r, i) => (i === row ? { ...r, [fieldName]: next } : r));
+    onChange({ ...table, records: newRecords });
+  }, [table, onChange]);
+
   const onHeaderContextMenu = useCallback((colIdx: number, args: HeaderClickedEventArgs) => {
     args.preventDefault();
     const field = fields[colIdx];
     if (!field) return;
-    const action = window.prompt(
-      `[${field.display_name ?? field.name}] ヘッダー右クリック (proto)\nコマンド: settings / delete`,
-      'settings'
-    );
-    console.log('[proto] header context menu', field.name, action);
+    const ev = args.localEventX !== undefined ? args : null;
+    // ブラウザの bounds を直接取れないので bounds + event の座標を合成
+    const x = (args.bounds?.x ?? 0) + (ev?.localEventX ?? 0);
+    const y = (args.bounds?.y ?? 0) + (ev?.localEventY ?? 0);
+    setMenu({
+      x, y,
+      items: [
+        { type: 'item', label: 'この列の設定を編集（未実装）', action: () => console.log('settings', field.name) },
+        { type: 'item', label: 'この列を左に固定（未実装）', action: () => console.log('pin', field.name) },
+        { type: 'separator' },
+        { type: 'item', label: 'この列を削除（未実装）', action: () => console.log('delete', field.name), danger: true },
+      ],
+    });
   }, [fields]);
 
   const onCellContextMenu = useCallback((cell: Item, args: CellClickedEventArgs) => {
@@ -203,36 +290,63 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
     const [col, row] = cell;
     const field = fields[col];
     if (!field) return;
-    const action = window.prompt(
-      `[${field.display_name ?? field.name}] 行 ${row + 1} 右クリック (proto)\nコマンド: color / comment / override`,
-      'color'
-    );
-    if (!action) return;
+    const x = (args.bounds?.x ?? 0) + (args.localEventX ?? 0);
+    const y = (args.bounds?.y ?? 0) + (args.localEventY ?? 0);
     const existing = table.records[row]?.[field.name] as Cell | undefined;
-    let next: Cell | undefined;
-    if (action === 'color' && cellColors) {
-      const key = Object.keys(cellColors.cell_colors)[0];
-      next = isRichCell(existing as Cell)
-        ? { ...(existing as RichCell), color: key }
-        : { value: existing as SimpleCell, color: key };
-    } else if (action === 'comment') {
-      const c = window.prompt('コメント:', isRichCell(existing as Cell) ? ((existing as RichCell).comment ?? '') : '');
-      if (c === null) return;
-      next = isRichCell(existing as Cell)
-        ? { ...(existing as RichCell), comment: c || undefined }
-        : { value: existing as SimpleCell, comment: c || undefined };
-    } else if (action === 'override') {
-      const f = window.prompt('式（=なし）:', isRichCell(existing as Cell) ? ((existing as RichCell).override ?? '') : '');
-      if (f === null) return;
-      next = isRichCell(existing as Cell)
-        ? { ...(existing as RichCell), override: f || undefined, value: undefined }
-        : { override: f || undefined };
-    } else {
-      return;
+
+    const items: ContextMenuItem[] = [];
+    // 色サブメニュー（プロトでは各色を個別項目として展開）
+    if (cellColors) {
+      for (const [key, def] of Object.entries(cellColors.cell_colors)) {
+        items.push({
+          type: 'item',
+          label: `■ 色: ${def.label ?? key}`,
+          action: () => {
+            const next: RichCell = isRichCell(existing as Cell)
+              ? { ...(existing as RichCell), color: key }
+              : { value: existing as SimpleCell, color: key };
+            updateCell(row, field.name, next);
+          },
+        });
+      }
+      items.push({
+        type: 'item',
+        label: '色をクリア',
+        action: () => {
+          if (!isRichCell(existing as Cell)) return;
+          const r = existing as RichCell;
+          const next: Cell = { ...r, color: undefined };
+          updateCell(row, field.name, next);
+        },
+      });
+      items.push({ type: 'separator' });
     }
-    const newRecords = table.records.map((r, i) => (i === row ? { ...r, [field.name]: next } : r));
-    onChange({ ...table, records: newRecords });
-  }, [fields, table, cellColors, onChange]);
+    items.push({
+      type: 'item',
+      label: 'コメントを編集',
+      action: () => {
+        const c = window.prompt('コメント:', isRichCell(existing as Cell) ? ((existing as RichCell).comment ?? '') : '');
+        if (c === null) return;
+        const next: RichCell = isRichCell(existing as Cell)
+          ? { ...(existing as RichCell), comment: c || undefined }
+          : { value: existing as SimpleCell, comment: c || undefined };
+        updateCell(row, field.name, next);
+      },
+    });
+    items.push({
+      type: 'item',
+      label: '式をオーバーライド',
+      action: () => {
+        const f = window.prompt('式（=なし、空で解除）:', isRichCell(existing as Cell) ? ((existing as RichCell).override ?? '') : '');
+        if (f === null) return;
+        const next: RichCell = isRichCell(existing as Cell)
+          ? { ...(existing as RichCell), override: f || undefined, value: f ? undefined : (existing as RichCell).value }
+          : { override: f || undefined };
+        updateCell(row, field.name, next);
+      },
+    });
+    setMenu({ x, y, items });
+  }, [fields, table, cellColors, updateCell]);
 
   // DrawCellCallback シグネチャ: (args, drawContent) => void
   // drawContent() を呼ぶとライブラリ標準の描画を実行、その前後に独自描画を重ねる
@@ -291,22 +405,31 @@ export function GlideTableView({ table, fields, cellColors, validation, onChange
   }, [fields, table.records, cellColors, errSet, warnSet]);
 
   return (
-    <DataEditor
-      columns={columns}
-      rows={table.records.length}
-      getCellContent={getCellContent}
-      onCellEdited={onCellEdited}
-      onFillPattern={onFillPattern}
-      onHeaderContextMenu={onHeaderContextMenu}
-      onCellContextMenu={onCellContextMenu}
-      drawCell={drawCell}
-      rangeSelect="multi-cell"
-      fillHandle
-      smoothScrollX
-      smoothScrollY
-      width="100%"
-      height="100%"
-      rowMarkers="checkbox-visible"
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <DataEditor
+        columns={columns}
+        rows={table.records.length}
+        getCellContent={getCellContent}
+        onCellEdited={onCellEdited}
+        onPaste={onPaste}
+        onDelete={onDelete}
+        onFillPattern={onFillPattern}
+        onHeaderContextMenu={onHeaderContextMenu}
+        onCellContextMenu={onCellContextMenu}
+        drawCell={drawCell}
+        rangeSelect="rect"
+        getCellsForSelection={getCellsForSelection}
+        fillHandle
+        smoothScrollX
+        smoothScrollY
+        width="100%"
+        height="100%"
+        rowMarkers="checkbox-visible"
+        keybindings={{ search: true, copy: true, paste: true, selectAll: true }}
+      />
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
+    </div>
   );
 }
